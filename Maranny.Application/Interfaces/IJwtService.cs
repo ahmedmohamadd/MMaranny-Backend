@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 using Maranny.Core.Entities;
 using System.Security.Claims;
 
-namespace Maranny.Core.Interfaces
+namespace Maranny.Application.Interfaces
 {
     public interface IJwtService
     {

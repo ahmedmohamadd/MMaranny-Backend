@@ -1,12 +1,7 @@
 ﻿using Maranny.Application.DTOs.Admin;
-using Maranny.Application.DTOs.Auth;
-using Maranny.Core.Entities;
-using Maranny.Core.Enums;
-using Maranny.Infrastructure.Data;
+using Maranny.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace Maranny.API.Controllers
@@ -16,553 +11,114 @@ namespace Maranny.API.Controllers
     [Authorize(Roles = "Admin")]
     public class AdminController : ControllerBase
     {
-        private readonly UserManager<ApplicationUser> _userManager;
-        private readonly ApplicationDbContext _dbContext;
+        private readonly IAdminService _adminService;
 
-        public AdminController(
-            UserManager<ApplicationUser> userManager,
-            ApplicationDbContext dbContext)
+        public AdminController(IAdminService adminService)
         {
-            _userManager = userManager;
-            _dbContext = dbContext;
+            _adminService = adminService;
         }
 
-        // Block a user
         [HttpPost("users/{userId}/block")]
         public async Task<IActionResult> BlockUser(int userId, [FromBody] BlockUserDto dto)
         {
-            var user = await _userManager.FindByIdAsync(userId.ToString());
-            if (user == null)
-            {
-                return NotFound(new { error = "User not found" });
-            }
-
-            if (user.IsBlocked)
-            {
-                return BadRequest(new { error = "User is already blocked" });
-            }
-
-            // Get admin ID from JWT
             var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(adminIdClaim, out int adminId))
-            {
-                return Unauthorized();
-            }
+            if (!int.TryParse(adminIdClaim, out int adminId)) return Unauthorized();
 
-            // Block the user
-            user.IsBlocked = true;
-            user.BlockReason = dto.Reason;
-            user.BlockedByAdminId = adminId;
-            user.BlockedAt = DateTime.UtcNow;
-
-            var result = await _userManager.UpdateAsync(user);
-            if (!result.Succeeded)
-            {
-                return BadRequest(new { errors = result.Errors.Select(e => e.Description) });
-            }
-
-            // Revoke all refresh tokens
-            var refreshTokens = await _dbContext.RefreshTokens
-                .Where(rt => rt.UserId == userId && !rt.IsRevoked)
-                .ToListAsync();
-
-            foreach (var token in refreshTokens)
-            {
-                token.IsRevoked = true;
-                token.RevokedAt = DateTime.UtcNow;
-            }
-            await _dbContext.SaveChangesAsync();
-
-            return Ok(new { message = "User blocked successfully" });
+            var (success, message) = await _adminService.BlockUserAsync(adminId, userId, dto);
+            if (!success) return BadRequest(new { error = message });
+            return Ok(new { message });
         }
 
-        // Unblock a user
         [HttpPost("users/{userId}/unblock")]
         public async Task<IActionResult> UnblockUser(int userId)
         {
-            var user = await _userManager.FindByIdAsync(userId.ToString());
-            if (user == null)
-            {
-                return NotFound(new { error = "User not found" });
-            }
-
-            if (!user.IsBlocked)
-            {
-                return BadRequest(new { error = "User is not blocked" });
-            }
-
-            // Unblock the user
-            user.IsBlocked = false;
-            user.BlockReason = null;
-            user.BlockedByAdminId = null;
-            user.BlockedAt = null;
-
-            var result = await _userManager.UpdateAsync(user);
-            if (!result.Succeeded)
-            {
-                return BadRequest(new { errors = result.Errors.Select(e => e.Description) });
-            }
-
-            return Ok(new { message = "User unblocked successfully" });
+            var (success, message) = await _adminService.UnblockUserAsync(userId);
+            if (!success) return BadRequest(new { error = message });
+            return Ok(new { message });
         }
 
-        // Get list of pending coach verifications
         [HttpGet("coaches/pending")]
         public async Task<IActionResult> GetPendingCoaches()
         {
-            var pendingCoaches = await _dbContext.Coaches
-                .Include(c => c.User)
-                .Where(c => c.VerificationStatus == VerificationStatus.Pending)
-                .Select(c => new
-                {
-                    c.CoachID,
-                    c.F_name,
-                    c.L_name,
-                    c.Bio,
-                    c.ExperienceYears,
-                    c.CertificateUrl,
-                    Email = c.User.Email,
-                    PhoneNumber = c.User.PhoneNumber,
-                    CreatedAt = c.User.CreatedAt
-                })
-                .ToListAsync();
-
-            return Ok(pendingCoaches);
+            var result = await _adminService.GetPendingCoachesAsync();
+            return Ok(result);
         }
 
-        // Verify a coach
         [HttpPost("coaches/{coachId}/verify")]
         public async Task<IActionResult> VerifyCoach(int coachId, [FromBody] VerifyCoachDto dto)
         {
-            var coach = await _dbContext.Coaches
-                .Include(c => c.User)
-                .FirstOrDefaultAsync(c => c.CoachID == coachId);
-
-            if (coach == null)
-            {
-                return NotFound(new { error = "Coach not found" });
-            }
-
-            if (coach.VerificationStatus == VerificationStatus.Approved)
-            {
-                return BadRequest(new { error = "Coach is already verified" });
-            }
-
-            // Get admin ID from JWT
             var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(adminIdClaim, out int adminId))
-            {
-                return Unauthorized();
-            }
+            if (!int.TryParse(adminIdClaim, out int adminId)) return Unauthorized();
 
-            // Verify the coach
-            coach.VerificationStatus = VerificationStatus.Approved;
-            coach.VerifiedAt = DateTime.UtcNow;
-            coach.VerifiedByAdminId = adminId;
-            coach.VerificationNotes = dto.Notes;
-            coach.RejectionReason = null;
-
-            // Add Coach role to the user
-            var user = coach.User;
-            var hasCoachRole = await _userManager.IsInRoleAsync(user, "Coach");
-            if (!hasCoachRole)
-            {
-                await _userManager.AddToRoleAsync(user, "Coach");
-            }
-
-            // Update primary user type if needed
-            if (user.PrimaryUserType != UserType.Coach)
-            {
-                user.PrimaryUserType = UserType.Coach;
-                await _userManager.UpdateAsync(user);
-            }
-
-            await _dbContext.SaveChangesAsync();
-
-            return Ok(new { message = "Coach verified successfully" });
+            var (success, message) = await _adminService.VerifyCoachAsync(adminId, coachId, dto);
+            if (!success) return BadRequest(new { error = message });
+            return Ok(new { message });
         }
 
-        // Reject a coach verification
         [HttpPost("coaches/{coachId}/reject")]
         public async Task<IActionResult> RejectCoach(int coachId, [FromBody] RejectCoachDto dto)
         {
-            var coach = await _dbContext.Coaches
-                .FirstOrDefaultAsync(c => c.CoachID == coachId);
-
-            if (coach == null)
-            {
-                return NotFound(new { error = "Coach not found" });
-            }
-
-            if (coach.VerificationStatus == VerificationStatus.Approved)
-            {
-                return BadRequest(new { error = "Cannot reject an already verified coach" });
-            }
-
-            // Reject the coach
-            coach.VerificationStatus = VerificationStatus.Rejected;
-            coach.RejectionReason = dto.Reason;
-            coach.VerificationNotes = null;
-            coach.VerifiedAt = null;
-            coach.VerifiedByAdminId = null;
-
-            await _dbContext.SaveChangesAsync();
-
-            return Ok(new { message = "Coach verification rejected" });
+            var (success, message) = await _adminService.RejectCoachAsync(coachId, dto);
+            if (!success) return BadRequest(new { error = message });
+            return Ok(new { message });
         }
 
-        // Get user details
         [HttpGet("users/{userId}")]
         public async Task<IActionResult> GetUserDetails(int userId)
         {
-            var user = await _userManager.Users
-                .Include(u => u.Client)
-                .Include(u => u.Coach)
-                .Include(u => u.Admin)
-                .FirstOrDefaultAsync(u => u.Id == userId);
-
-            if (user == null)
-            {
-                return NotFound(new { error = "User not found" });
-            }
-
-            var roles = await _userManager.GetRolesAsync(user);
-
-            var userDetails = new
-            {
-                user.Id,
-                user.Email,
-                user.PhoneNumber,
-                user.EmailConfirmed,
-                user.PhoneNumberConfirmed,
-                primaryUserType = user.PrimaryUserType.ToString(),
-                user.IsBlocked,
-                user.BlockReason,
-                user.BlockedAt,
-                user.CreatedAt,
-                Roles = roles,
-                ClientProfile = user.Client != null ? new
-                {
-                    user.Client.ClientID,
-                    user.Client.F_name,
-                    user.Client.L_name,
-                    user.Client.City,
-                    user.Client.Gender
-                } : null,
-                CoachProfile = user.Coach != null ? new
-                {
-                    user.Coach.CoachID,
-                    user.Coach.F_name,
-                    user.Coach.L_name,
-                    user.Coach.Bio,
-                    user.Coach.ExperienceYears,
-                    verificationStatus = user.Coach.VerificationStatus.ToString(),
-                    user.Coach.VerifiedAt,
-                    user.Coach.RejectionReason
-                } : null,
-                AdminProfile = user.Admin != null ? new
-                {
-                    user.Admin.AdminID,
-                    user.Admin.F_name,
-                    user.Admin.L_name,
-                    user.Admin.Username
-                } : null
-            };
-
-            return Ok(userDetails);
+            var (success, data) = await _adminService.GetUserDetailsAsync(userId);
+            if (!success) return NotFound(new { error = "User not found" });
+            return Ok(data);
         }
 
-        // List all users with filters
         [HttpGet("users")]
         public async Task<IActionResult> GetUsers(
-            [FromQuery] string? role = null,
-            [FromQuery] bool? isBlocked = null,
-            [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 20)
+            [FromQuery] string? role, [FromQuery] bool? isBlocked,
+            [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
-            var query = _userManager.Users
-     .Include(u => u.Client)
-     .Include(u => u.Coach)
-     .Include(u => u.Admin)
-     .AsQueryable();
-
-            if (isBlocked.HasValue)
-                query = query.Where(u => u.IsBlocked == isBlocked.Value);
-
-            var allUsers = await query.OrderByDescending(u => u.CreatedAt).ToListAsync();
-
-            var userList = new List<object>();
-            foreach (var user in allUsers)
-            {
-                var roles = await _userManager.GetRolesAsync(user);
-                if (!string.IsNullOrEmpty(role) && !roles.Contains(role))
-                    continue;
-
-                userList.Add(new
-                {
-                    id = user.Id,
-                    email = user.Email,
-                    name = user.Client?.F_name ?? user.Coach?.F_name ?? user.Admin?.F_name ?? "",
-                    primaryUserType = user.PrimaryUserType.ToString(),
-                    roles,
-                    isBlocked = user.IsBlocked,
-                    emailConfirmed = user.EmailConfirmed,
-                    createdAt = user.CreatedAt
-                });
-            }
-
-            var totalCount = userList.Count;
-            var pagedUsers = userList
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .ToList();
-
-            return Ok(new
-            {
-                totalCount = totalCount,
-                page = page,
-                pageSize = pageSize,
-                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
-                users = pagedUsers
-            });
+            var result = await _adminService.GetUsersAsync(role, isBlocked, page, pageSize);
+            return Ok(result);
         }
 
-        // Get pending certificates (coaches waiting for certificate verification)
         [HttpGet("certificates/pending")]
         public async Task<IActionResult> GetPendingCertificates()
         {
-            var pendingCertificates = await _dbContext.Coaches
-                .Include(c => c.User)
-                .Where(c => c.VerificationStatus == VerificationStatus.Pending &&
-                            !string.IsNullOrEmpty(c.CertificateUrl))
-                .Select(c => new
-                {
-                    c.CoachID,
-                    c.F_name,
-                    c.L_name,
-                    c.Bio,
-                    c.ExperienceYears,
-                    c.CertificateUrl,
-                    Email = c.User.Email,
-                    PhoneNumber = c.User.PhoneNumber,
-                    CreatedAt = c.User.CreatedAt
-                })
-                .ToListAsync();
-
-            return Ok(pendingCertificates);
+            var result = await _adminService.GetPendingCertificatesAsync();
+            return Ok(result);
         }
 
-        // Verify certificate (same as verify coach, but focused on certificate)
         [HttpPut("certificates/{coachId}/verify")]
         public async Task<IActionResult> VerifyCertificate(int coachId, [FromBody] string? notes = null)
         {
-            var coach = await _dbContext.Coaches
-                .Include(c => c.User)
-                .FirstOrDefaultAsync(c => c.CoachID == coachId);
-
-            if (coach == null)
-            {
-                return NotFound(new { error = "Coach not found" });
-            }
-
-            if (string.IsNullOrEmpty(coach.CertificateUrl))
-            {
-                return BadRequest(new { error = "No certificate uploaded" });
-            }
-
-            // Get admin ID
             var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(adminIdClaim, out int adminId))
-            {
-                return Unauthorized();
-            }
+            if (!int.TryParse(adminIdClaim, out int adminId)) return Unauthorized();
 
-            coach.VerificationStatus = VerificationStatus.Approved;
-            coach.VerifiedAt = DateTime.UtcNow;
-            coach.VerifiedByAdminId = adminId;
-            coach.VerificationNotes = notes;
-
-            // Add Coach role
-            var user = coach.User;
-            var hasCoachRole = await _userManager.IsInRoleAsync(user, "Coach");
-            if (!hasCoachRole)
-            {
-                await _userManager.AddToRoleAsync(user, "Coach");
-            }
-
-            // Update primary user type
-            if (user.PrimaryUserType != UserType.Coach)
-            {
-                user.PrimaryUserType = UserType.Coach;
-                await _userManager.UpdateAsync(user);
-            }
-
-            await _dbContext.SaveChangesAsync();
-
-            return Ok(new { message = "Certificate verified successfully" });
+            var (success, message) = await _adminService.VerifyCertificateAsync(adminId, coachId, notes);
+            if (!success) return BadRequest(new { error = message });
+            return Ok(new { message });
         }
 
-        // Get reviews pending moderation (flagged reviews or all recent reviews)
         [HttpGet("reviews/pending")]
-        public async Task<IActionResult> GetPendingReviews([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+        public async Task<IActionResult> GetPendingReviews(
+            [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
-            // For now, return recent reviews (you can add a "IsFlagged" field later)
-            var query = _dbContext.Reviews
-                .Include(r => r.Client)
-                .Include(r => r.Coach)
-                .OrderByDescending(r => r.CreatedAt);
-
-            var totalCount = await query.CountAsync();
-
-            var reviews = await query
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(r => new
-                {
-                    r.ReviewID,
-                    r.Rating,
-                    r.Comment,
-                    r.CoachResponse,
-                    r.CreatedAt,
-                    Client = new
-                    {
-                        r.Client.ClientID,
-                        Name = r.Client.F_name + " " + r.Client.L_name,
-                        r.Client.Email
-                    },
-                    Coach = new
-                    {
-                        r.Coach.CoachID,
-                        Name = r.Coach.F_name + " " + r.Coach.L_name
-                    }
-                })
-                .ToListAsync();
-
-            return Ok(new
-            {
-                totalCount = totalCount,
-                page = page,
-                pageSize = pageSize,
-                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
-                reviews = reviews
-            });
+            var result = await _adminService.GetPendingReviewsAsync(page, pageSize);
+            return Ok(result);
         }
 
-        // Moderate review (delete inappropriate review)
         [HttpPut("reviews/{reviewId}/moderate")]
         public async Task<IActionResult> ModerateReview(int reviewId, [FromBody] string action = "delete")
         {
-            var review = await _dbContext.Reviews.FindAsync(reviewId);
-            if (review == null)
-            {
-                return NotFound(new { error = "Review not found" });
-            }
-
-            if (action.ToLower() == "delete")
-            {
-                _dbContext.Reviews.Remove(review);
-                await _dbContext.SaveChangesAsync();
-
-                // Update coach average rating after deletion
-                await UpdateCoachAverageRatingForAdmin(review.CoachID);
-
-                return Ok(new { message = "Review deleted successfully" });
-            }
-
-            return BadRequest(new { error = "Invalid action" });
+            var (success, message) = await _adminService.ModerateReviewAsync(reviewId, action);
+            if (!success) return BadRequest(new { error = message });
+            return Ok(new { message });
         }
 
-        // Get analytics
         [HttpGet("analytics")]
         public async Task<IActionResult> GetAnalytics()
         {
-            // Total users
-            var totalUsers = await _dbContext.Users.CountAsync();
-
-            // Total coaches
-            var totalCoaches = await _dbContext.Coaches.CountAsync();
-            var verifiedCoaches = await _dbContext.Coaches
-                .CountAsync(c => c.VerificationStatus == VerificationStatus.Approved);
-            var pendingCoaches = await _dbContext.Coaches
-                .CountAsync(c => c.VerificationStatus == VerificationStatus.Pending);
-
-            // Total clients
-            var totalClients = await _dbContext.Clients.CountAsync();
-
-            // Total bookings
-            var totalBookings = await _dbContext.Bookings.CountAsync();
-            var completedBookings = await _dbContext.Bookings
-                .CountAsync(b => b.Status == BookingStatus.Completed);
-
-            // Total reviews
-            var totalReviews = await _dbContext.Reviews.CountAsync();
-
-            // Average rating across all coaches
-            var averageRating = await _dbContext.Coaches
-                .Where(c => c.AvgRating > 0)
-                .AverageAsync(c => (decimal?)c.AvgRating) ?? 0;
-
-            // Monthly growth (new users this month)
-            var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
-            var newUsersThisMonth = await _dbContext.Users
-                .CountAsync(u => u.CreatedAt >= startOfMonth);
-
-            // Total payments
-            var totalRevenue = await _dbContext.Payments
-                .Where(p => p.Status == PaymentStatus.Completed)
-                .SumAsync(p => (decimal?)p.Amount) ?? 0;
-
-            return Ok(new
-            {
-                Users = new
-                {
-                    Total = totalUsers,
-                    Clients = totalClients,
-                    Coaches = totalCoaches,
-                    NewThisMonth = newUsersThisMonth
-                },
-                Coaches = new
-                {
-                    Total = totalCoaches,
-                    Verified = verifiedCoaches,
-                    Pending = pendingCoaches
-                },
-                Bookings = new
-                {
-                    Total = totalBookings,
-                    Completed = completedBookings
-                },
-                Reviews = new
-                {
-                    Total = totalReviews,
-                    AverageRating = Math.Round(averageRating, 2)
-                },
-                Revenue = new
-                {
-                    Total = totalRevenue,
-                    Currency = "EGP"
-                },
-                MonthlyGrowth = new
-                {
-                    NewUsers = newUsersThisMonth,
-                    Month = DateTime.UtcNow.ToString("MMMM yyyy")
-                }
-            });
+            var result = await _adminService.GetAnalyticsAsync();
+            return Ok(result);
         }
-
-        // Helper method for admin to update coach rating
-        private async Task UpdateCoachAverageRatingForAdmin(int coachId)
-        {
-            var coach = await _dbContext.Coaches.FindAsync(coachId);
-            if (coach == null) return;
-
-            var averageRating = await _dbContext.Reviews
-                .Where(r => r.CoachID == coachId)
-                .AverageAsync(r => (decimal?)r.Rating);
-
-            coach.AvgRating = averageRating ?? 0;
-            await _dbContext.SaveChangesAsync();
-        }
-
     }
 }

@@ -1,7 +1,7 @@
-﻿using Maranny.Core.Entities;
-using Maranny.Infrastructure.Data;
+﻿using Maranny.Application.DTOs.Sports;
+using Maranny.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace Maranny.Api.Controllers
 {
@@ -9,44 +9,27 @@ namespace Maranny.Api.Controllers
     [Route("api/sports")]
     public class SportsController : ControllerBase
     {
-        private readonly ApplicationDbContext _db;
+        private readonly ISportsService _sportsService;
 
-        public SportsController(ApplicationDbContext db)
+        public SportsController(ISportsService sportsService)
         {
-            _db = db;
+            _sportsService = sportsService;
         }
 
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
-            var sports = await _db.Sports
-                .OrderBy(s => s.Name)
-                .Select(s => new { s.Id, s.Name })
-                .ToListAsync();
+            var sports = await _sportsService.GetAllAsync();
             return Ok(sports);
         }
 
         [HttpPost]
-        [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> Create([FromBody] CreateSportDto dto)
         {
-            if (string.IsNullOrWhiteSpace(dto.Name))
-                return BadRequest(new { error = "Sport name is required" });
-            {
-                var sport = new Sport
-                {
-                    Name = dto.Name
-                };
-                _db.Sports.Add(sport);
-                await _db.SaveChangesAsync();
-                return Ok(new { sport.Id, sport.Name });
-            }
-        }
-
-        // DTO defined here temporarily
-        public class CreateSportDto
-        {
-            public string Name { get; set; } = string.Empty;
+            var (success, message, data) = await _sportsService.CreateAsync(dto);
+            if (!success) return BadRequest(new { error = message });
+            return Ok(data);
         }
     }
 }

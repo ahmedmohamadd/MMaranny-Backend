@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Maranny.Core.Interfaces;
+using Maranny.Application.Interfaces;
 using System.Net.Mail;
 using System.Text.RegularExpressions;
 

@@ -8,7 +8,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Maranny.Infrastructure.Middleware
+namespace Maranny.Api.Middleware
 {
     public class BlockedUserMiddleware
     {

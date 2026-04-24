@@ -31,4 +31,8 @@
     <ProjectReference Include="..\Maranny.Infrastructure\Maranny.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Hubs\" />
+  </ItemGroup>
+
 </Project>

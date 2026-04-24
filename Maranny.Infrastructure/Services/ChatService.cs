@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Maranny.Core.Entities;
-using Maranny.Core.Interfaces;
+using Maranny.Application.Interfaces;
 using Maranny.Infrastructure.Data;
 using Maranny.Infrastructure.Hubs;
 using Microsoft.AspNetCore.SignalR;

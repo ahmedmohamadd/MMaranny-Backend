@@ -1,6 +1,8 @@
+using Maranny.Application.Interfaces;
 using Maranny.Core.Entities;
 using Maranny.Core.Enums;
 using Maranny.Infrastructure.Data;
+using Maranny.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -23,23 +25,43 @@ namespace Maranny.Api
                 )
             );
 
+            builder.Services.AddScoped<IAdminService, AdminService>();
+
+            builder.Services.AddScoped<IUserService, UsersService>();
+
+            builder.Services.AddScoped<IPaymentsManagementService, PaymentsManagementService>();
+
+            builder.Services.AddScoped<IBookingService, BookingsService>();
+
+            builder.Services.AddScoped<ISessionService, SessionsService>();
+
+            builder.Services.AddScoped<ISearchService, SearchService>();
+
+            builder.Services.AddScoped<IReviewService, ReviewsService>();
+
+            builder.Services.AddScoped<IProductService, ProductsService>();
+
+            builder.Services.AddScoped<ISportsService, SportsService>();
+
+            builder.Services.AddScoped<IAuthService, AuthService>();
+
             // Register JWT Service
-            builder.Services.AddScoped<Maranny.Core.Interfaces.IJwtService, Maranny.Infrastructure.Services.JwtService>();
+            builder.Services.AddScoped<Maranny.Application.Interfaces.IJwtService, Maranny.Infrastructure.Services.JwtService>();
 
             // Register Email Validation Service
-            builder.Services.AddScoped<Maranny.Core.Interfaces.IEmailValidationService, Maranny.Infrastructure.Services.EmailValidationService>();
+            builder.Services.AddScoped<Maranny.Application.Interfaces.IEmailValidationService, Maranny.Infrastructure.Services.EmailValidationService>();
 
             // Register Email Service (not configured yet - will add later)
-            builder.Services.AddScoped<Maranny.Core.Interfaces.IEmailService, Maranny.Infrastructure.Services.EmailService>();
+            builder.Services.AddScoped<Maranny.Application.Interfaces.IEmailService, Maranny.Infrastructure.Services.EmailService>();
 
             // Register Notification Service
-            builder.Services.AddScoped<Maranny.Core.Interfaces.INotificationService, Maranny.Infrastructure.Services.NotificationService>();
+            builder.Services.AddScoped<Maranny.Application.Interfaces.INotificationService, Maranny.Infrastructure.Services.NotificationService>();
 
             // Register HttpClient for PaymentService
-            builder.Services.AddHttpClient<Maranny.Core.Interfaces.IPaymentService, Maranny.Infrastructure.Services.PaymentService>();
+            builder.Services.AddHttpClient<Maranny.Application.Interfaces.IPaymentService, Maranny.Infrastructure.Services.PaymentService>();
 
             // Register Chat Service
-            builder.Services.AddScoped<Maranny.Core.Interfaces.IChatService, Maranny.Infrastructure.Services.ChatService>();
+            builder.Services.AddScoped<Maranny.Application.Interfaces.IChatService, Maranny.Infrastructure.Services.ChatService>();
 
             // ===== IDENTITY =====
             builder.Services.AddIdentity<ApplicationUser, IdentityRole<int>>(options =>
@@ -186,7 +208,7 @@ namespace Maranny.Api
             app.UseStaticFiles(); // Enable serving static files from wwwroot
             app.UseCors("AllowAll");
             app.UseAuthentication();
-            app.UseMiddleware<Maranny.Infrastructure.Middleware.BlockedUserMiddleware>();
+            app.UseMiddleware<Maranny.Api.Middleware.BlockedUserMiddleware>();
             app.UseAuthorization();
             app.MapHub<Maranny.Infrastructure.Hubs.NotificationHub>("/notificationHub");
             app.MapHub<Maranny.Infrastructure.Hubs.ChatHub>("/chatHub");

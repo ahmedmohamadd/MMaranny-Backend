@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Maranny.Core.Entities;
 using Maranny.Core.Enums;
-using Maranny.Core.Interfaces;
+using Maranny.Application.Interfaces;
 using Maranny.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
