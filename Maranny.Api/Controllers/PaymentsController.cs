@@ -1,4 +1,4 @@
-﻿using Maranny.Application.DTOs.Payments;
+using Maranny.Application.DTOs.Payments;
 using Maranny.Core.Enums;
 using Maranny.Core.Interfaces;
 using Maranny.Infrastructure.Data;
@@ -28,26 +28,22 @@ namespace Maranny.API.Controllers
             _notificationService = notificationService;
         }
 
-        // Initiate payment
         [HttpPost("initiate")]
         [Authorize(Roles = "Client")]
         public async Task<IActionResult> InitiatePayment(InitiatePaymentDto dto)
         {
-            // Get current user (client)
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId))
             {
                 return Unauthorized();
             }
 
-            // Get client ID
             var client = await _dbContext.Clients.FirstOrDefaultAsync(c => c.UserId == userId);
             if (client == null)
             {
                 return NotFound(new { error = "Client profile not found" });
             }
 
-            // Verify booking exists and belongs to client
             var booking = await _dbContext.Bookings
                 .Include(b => b.TrainingSession)
                     .ThenInclude(s => s.Coach)
@@ -69,10 +65,9 @@ namespace Maranny.API.Controllers
             }
 
             var normalizedMethod = dto.Method?.Trim();
-            if (!string.Equals(normalizedMethod, "Card", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(normalizedMethod, "Wallet", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(normalizedMethod, "Cash", StringComparison.OrdinalIgnoreCase))
             {
-                return BadRequest(new { error = "Only Card and Wallet payment methods are supported" });
+                return BadRequest(new { error = "Only Cash payment is supported in this phase" });
             }
 
             var expectedAmount = await _dbContext.CoachSports
@@ -86,7 +81,7 @@ namespace Maranny.API.Controllers
                 return BadRequest(new { error = "Session price is not configured for this coach and sport" });
             }
 
-            if (dto.Amount != expectedAmount.Value)
+            if (dto.Amount.HasValue && dto.Amount.Value != expectedAmount.Value)
             {
                 return BadRequest(new
                 {
@@ -95,20 +90,24 @@ namespace Maranny.API.Controllers
                 });
             }
 
-            // Check if payment already exists
             var existingPayment = await _paymentService.GetPaymentByBookingIdAsync(dto.BookingID);
             if (existingPayment != null)
             {
-                if (existingPayment.Status == PaymentStatus.Completed)
-                    return BadRequest(new { error = "Payment already completed for this booking" });
-
-                if (existingPayment.Status == PaymentStatus.Pending)
-                    return BadRequest(new { error = "Payment already initiated for this booking. Please complete the existing payment." });
+                return Ok(new
+                {
+                    message = "Cash payment already selected for this booking",
+                    paymentId = existingPayment.PaymentID,
+                    amount = existingPayment.Amount,
+                    method = existingPayment.Method,
+                    status = existingPayment.Status.ToString(),
+                    bookingStatus = booking.Status.ToString(),
+                    cashPayment = true,
+                    paymentUrl = (string?)null
+                });
             }
 
             try
             {
-                // Create payment
                 var payment = await _paymentService.InitiatePaymentAsync(
                     dto.BookingID,
                     expectedAmount.Value,
@@ -116,30 +115,36 @@ namespace Maranny.API.Controllers
                     client.ClientID
                 );
 
-                // Generate payment URL
-                var paymentUrl = await _paymentService.GeneratePaymentUrlAsync(payment);
+                await _notificationService.SendNotificationAsync(
+                    booking.TrainingSession.Coach.UserId,
+                    "Cash Payment Selected",
+                    $"A client selected cash payment for the booking on {booking.TrainingSession.SessionDate:MMM dd}.",
+                    NotificationType.BookingConfirmation
+                );
 
                 return Ok(new
                 {
-                    message = "Payment initiated successfully",
+                    message = "Cash payment selected successfully",
                     paymentId = payment.PaymentID,
-                    paymentUrl = paymentUrl,
+                    paymentUrl = (string?)null,
                     amount = payment.Amount,
                     platformFee = payment.PlatformFee,
-                    bookingStatus = booking.Status.ToString()
+                    method = payment.Method,
+                    status = payment.Status.ToString(),
+                    bookingStatus = booking.Status.ToString(),
+                    cashPayment = true,
+                    note = "Client will pay cash offline."
                 });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { error = "Failed to initiate payment", details = ex.Message });
+                return StatusCode(500, new { error = "Failed to save cash payment selection", details = ex.Message });
             }
         }
 
-        // Get payment details
         [HttpGet("{paymentId:int}")]
         public async Task<IActionResult> GetPaymentDetails(int paymentId)
         {
-            // Get current user
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId))
             {
@@ -157,11 +162,10 @@ namespace Maranny.API.Controllers
                 return NotFound(new { error = "Payment not found" });
             }
 
-            // Verify ownership (client or coach)
             var client = await _dbContext.Clients.FirstOrDefaultAsync(c => c.UserId == userId);
             var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId);
 
-            bool isOwner = (client != null && payment.ClientID == client.ClientID) ||
+            var isOwner = (client != null && payment.ClientID == client.ClientID) ||
                           (coach != null && payment.TrainingSession.CoachID == coach.CoachID);
 
             if (!isOwner && !User.IsInRole("Admin"))
@@ -179,6 +183,7 @@ namespace Maranny.API.Controllers
                 payment.TransactionDate,
                 payment.PlatformFee,
                 payment.RefundAmount,
+                cashPayment = string.Equals(payment.Method, "Cash", StringComparison.OrdinalIgnoreCase),
                 Session = new
                 {
                     payment.TrainingSession.SessionDate,
@@ -195,23 +200,12 @@ namespace Maranny.API.Controllers
             return Ok(result);
         }
 
-        // Webhook for payment confirmation (from Paymob)
         [HttpPost("webhook")]
         [AllowAnonymous]
         public async Task<IActionResult> PaymentWebhook([FromBody] object webhookData)
         {
-            // TODO: Verify webhook signature
-            // TODO: Parse Paymob webhook data
-            // For now, this is a placeholder
-
             try
             {
-                // In production, you would:
-                // 1. Verify webhook signature
-                // 2. Extract payment details
-                // 3. Update payment status
-                // 4. Send notifications
-
                 return Ok(new { message = "Webhook received" });
             }
             catch (Exception ex)
@@ -220,12 +214,10 @@ namespace Maranny.API.Controllers
             }
         }
 
-        // Get my payments (as client)
         [HttpGet("my")]
         [Authorize(Roles = "Client")]
         public async Task<IActionResult> GetMyPayments()
         {
-            // Get current user (client)
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId))
             {
@@ -250,6 +242,7 @@ namespace Maranny.API.Controllers
                     p.Method,
                     Status = p.Status.ToString(),
                     p.TransactionDate,
+                    cashPayment = p.Method == "Cash",
                     Session = new
                     {
                         p.TrainingSession.SessionDate,
@@ -264,9 +257,9 @@ namespace Maranny.API.Controllers
 
         private static string NormalizePaymentMethod(string method)
         {
-            return string.Equals(method, "wallet", StringComparison.OrdinalIgnoreCase)
-                ? "Wallet"
-                : "Card";
+            return string.Equals(method, "cash", StringComparison.OrdinalIgnoreCase)
+                ? "Cash"
+                : method;
         }
     }
 }

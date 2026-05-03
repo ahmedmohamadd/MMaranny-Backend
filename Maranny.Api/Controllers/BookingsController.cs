@@ -1,4 +1,4 @@
-﻿using Maranny.Application.DTOs.Sessions;
+using Maranny.Application.DTOs.Sessions;
 using Maranny.Core.Entities;
 using Maranny.Core.Enums;
 using Maranny.Core.Interfaces;
@@ -154,7 +154,7 @@ namespace Maranny.API.Controllers
             {
                 message = "Session booked successfully",
                 bookingId = booking.BookingID,
-                note = "Please complete payment to confirm your booking",
+                note = "Proceed to payment method selection",
                 totalPrice = sessionPrice,
                 bookingStatus = booking.Status.ToString()
             });
@@ -275,8 +275,7 @@ namespace Maranny.API.Controllers
                 b.Coach,
                 b.Payment,
                 canCancel = b.Status == BookingStatus.Pending.ToString() || b.Status == BookingStatus.Confirmed.ToString(),
-                canPay = b.Status == BookingStatus.Pending.ToString() &&
-                         (b.Payment == null || b.Payment.Status != PaymentStatus.Completed.ToString()),
+                canPay = b.Status == BookingStatus.Pending.ToString() && b.Payment == null,
                 canReview = b.Status == BookingStatus.Completed.ToString()
             });
 
@@ -371,8 +370,7 @@ namespace Maranny.API.Controllers
                 },
                 payment,
                 canCancel = booking.Status == BookingStatus.Pending || booking.Status == BookingStatus.Confirmed,
-                canPay = booking.Status == BookingStatus.Pending &&
-                         (payment == null || payment.Status != PaymentStatus.Completed.ToString()),
+                canPay = booking.Status == BookingStatus.Pending && payment == null,
                 canReview = booking.Status == BookingStatus.Completed
             });
         }
@@ -836,3 +834,5 @@ namespace Maranny.API.Controllers
         }
     }
 }
+
+
