@@ -1,10 +1,11 @@
-﻿using Maranny.Application.DTOs.Sessions;
+using Maranny.Application.DTOs.Sessions;
 using Maranny.Core.Entities;
 using Maranny.Core.Enums;
 using Maranny.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
 using System.Security.Claims;
 
 namespace Maranny.API.Controllers
@@ -20,19 +21,85 @@ namespace Maranny.API.Controllers
             _dbContext = dbContext;
         }
 
+        private static List<string> ParseAvailableDays(string? availabilityStatus)
+        {
+            if (string.IsNullOrWhiteSpace(availabilityStatus))
+            {
+                return new List<string>();
+            }
+
+            return availabilityStatus
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(day => !string.IsNullOrWhiteSpace(day))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static int? MapDayNameToDayOfWeekNumber(string dayName)
+        {
+            if (Enum.TryParse<DayOfWeek>(dayName, true, out var parsedDay))
+            {
+                return (int)parsedDay;
+            }
+
+            return dayName.Trim().ToLowerInvariant() switch
+            {
+                "saturday" => (int)DayOfWeek.Saturday,
+                "sunday" => (int)DayOfWeek.Sunday,
+                "monday" => (int)DayOfWeek.Monday,
+                "tuesday" => (int)DayOfWeek.Tuesday,
+                "wednesday" => (int)DayOfWeek.Wednesday,
+                "thursday" => (int)DayOfWeek.Thursday,
+                "friday" => (int)DayOfWeek.Friday,
+                _ => null
+            };
+        }
+
+        private static List<object> BuildUpcomingAvailabilityDates(IEnumerable<string> availableDays, int numberOfOccurrences = 14)
+        {
+            var dayNumbers = availableDays
+                .Select(MapDayNameToDayOfWeekNumber)
+                .Where(day => day.HasValue)
+                .Select(day => day!.Value)
+                .Distinct()
+                .ToHashSet();
+
+            var results = new List<object>();
+            if (dayNumbers.Count == 0)
+            {
+                return results;
+            }
+
+            var date = DateTime.UtcNow.Date;
+            while (results.Count < numberOfOccurrences)
+            {
+                if (dayNumbers.Contains((int)date.DayOfWeek))
+                {
+                    results.Add(new
+                    {
+                        date,
+                        dayName = date.DayOfWeek.ToString(),
+                        formattedDate = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                    });
+                }
+
+                date = date.AddDays(1);
+            }
+
+            return results;
+        }
+
         // Coach creates a training session
         [HttpPost]
         [Authorize(Roles = "Coach")]
         public async Task<IActionResult> CreateSession(CreateSessionDto dto)
         {
-            // Get current user (coach)
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId))
             {
                 return Unauthorized();
             }
 
-            // Get coach ID
             var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId);
             if (coach == null)
             {
@@ -45,26 +112,22 @@ namespace Maranny.API.Controllers
                 return BadRequest(new { error = "Coach must be verified before creating sessions" });
             }
 
-            // Validate session date is in the future
             if (dto.SessionDate.Date < DateTime.UtcNow.Date)
             {
                 return BadRequest(new { error = "Cannot create session in the past" });
             }
 
-            // Validate end time is after start time
             if (dto.End_Time <= dto.Start_Time)
             {
                 return BadRequest(new { error = "End time must be after start time" });
             }
 
-            // Verify sport exists
             var sport = await _dbContext.Sports.FindAsync(dto.SportID);
             if (sport == null)
             {
                 return NotFound(new { error = "Sport not found" });
             }
 
-            // Check for overlapping sessions for this coach
             var overlappingSession = await _dbContext.TrainingSessions
                 .Where(s => s.CoachID == coach.CoachID &&
                            s.SessionDate.Date == dto.SessionDate.Date &&
@@ -79,7 +142,6 @@ namespace Maranny.API.Controllers
                 return BadRequest(new { error = "You have an overlapping session at this time" });
             }
 
-            // Create session
             var session = new TrainingSession
             {
                 CoachID = coach.CoachID,
@@ -107,30 +169,26 @@ namespace Maranny.API.Controllers
         [HttpGet("my")]
         [Authorize(Roles = "Coach")]
         public async Task<IActionResult> GetMySessions(
-    [FromQuery] string? status = null,
-    [FromQuery] int page = 1,
-    [FromQuery] int pageSize = 20)
+            [FromQuery] string? status = null,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
-            // Get current user (coach)
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId))
             {
                 return Unauthorized();
             }
 
-            // Get coach ID
             var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId);
             if (coach == null)
             {
                 return NotFound(new { error = "Coach profile not found" });
             }
 
-            // Get sessions
             var query = _dbContext.TrainingSessions
                 .Include(s => s.Sport)
                 .Where(s => s.CoachID == coach.CoachID);
 
-            // Filter by status if provided
             if (!string.IsNullOrEmpty(status) && Enum.TryParse<SessionStatus>(status, out var sessionStatus))
             {
                 query = query.Where(s => s.Status == sessionStatus);
@@ -139,29 +197,29 @@ namespace Maranny.API.Controllers
             var totalCount = await query.CountAsync();
 
             var sessions = await query
-    .OrderByDescending(s => s.SessionDate)
-    .Skip((page - 1) * pageSize)
-    .Take(pageSize)
-    .Select(s => new
-    {
-        s.SessionID,
-        s.SessionDate,
-        s.SessionType,
-        s.Location,
-        s.MaxParticipants,
-        s.Start_Time,
-        s.End_Time,
-        Status = s.Status.ToString(),
-        SportName = s.Sport.Name,
-        SportID = s.SportID,
-        Price = _dbContext.CoachSports
-            .Where(cs => cs.CoachID == s.CoachID && cs.SportID == s.SportID)
-            .Select(cs => cs.PricePerSession)
-            .FirstOrDefault(),
-        BookedCount = _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID),
-        AvailableSlots = s.MaxParticipants - _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID)
-    })
-    .ToListAsync();
+                .OrderByDescending(s => s.SessionDate)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(s => new
+                {
+                    s.SessionID,
+                    s.SessionDate,
+                    s.SessionType,
+                    s.Location,
+                    s.MaxParticipants,
+                    s.Start_Time,
+                    s.End_Time,
+                    Status = s.Status.ToString(),
+                    SportName = s.Sport.Name,
+                    SportID = s.SportID,
+                    Price = _dbContext.CoachSports
+                        .Where(cs => cs.CoachID == s.CoachID && cs.SportID == s.SportID)
+                        .Select(cs => cs.PricePerSession)
+                        .FirstOrDefault(),
+                    BookedCount = _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID),
+                    AvailableSlots = s.MaxParticipants - _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID)
+                })
+                .ToListAsync();
 
             return Ok(new
             {
@@ -172,186 +230,252 @@ namespace Maranny.API.Controllers
                 sessions
             });
         }
-            // Browse available sessions (public/client)
-            [HttpGet]
-            [AllowAnonymous]
-            public async Task<IActionResult> GetAvailableSessions(
+
+        // Get coach booking availability based on onboarding days and real sessions
+        [HttpGet("availability/{coachId}")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetCoachAvailability(int coachId)
+        {
+            var coach = await _dbContext.Coaches
+                .Include(c => c.CoachSports)
+                    .ThenInclude(cs => cs.Sport)
+                .Include(c => c.CoachLocations)
+                .FirstOrDefaultAsync(c => c.CoachID == coachId);
+
+            if (coach == null)
+            {
+                return NotFound(new { error = "Coach not found" });
+            }
+
+            var availableDays = ParseAvailableDays(coach.AvailabilityStatus);
+            var upcomingAvailableDates = BuildUpcomingAvailabilityDates(availableDays);
+
+            var sessions = await _dbContext.TrainingSessions
+                .Include(s => s.Sport)
+                .Where(s => s.CoachID == coachId &&
+                            s.Status == SessionStatus.Scheduled &&
+                            s.SessionDate >= DateTime.UtcNow.Date)
+                .OrderBy(s => s.SessionDate)
+                .ThenBy(s => s.Start_Time)
+                .Select(s => new
+                {
+                    s.SessionID,
+                    s.SessionDate,
+                    s.Start_Time,
+                    s.End_Time,
+                    s.SessionType,
+                    s.Location,
+                    s.MaxParticipants,
+                    SportName = s.Sport.Name,
+                    SportID = s.SportID,
+                    Price = _dbContext.CoachSports
+                        .Where(cs => cs.CoachID == s.CoachID && cs.SportID == s.SportID)
+                        .Select(cs => cs.PricePerSession)
+                        .FirstOrDefault(),
+                    AvailableSlots = s.MaxParticipants - _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID)
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                coachId = coach.CoachID,
+                availableDays,
+                upcomingAvailableDates,
+                locations = coach.CoachLocations.Select(cl => cl.WorkingLocation).ToList(),
+                sports = coach.CoachSports.Select(cs => new
+                {
+                    sportID = cs.SportID,
+                    cs.Sport.Name,
+                    cs.PricePerSession
+                }).ToList(),
+                hasProfileAvailability = availableDays.Any(),
+                hasRealSessions = sessions.Any(),
+                sessions
+            });
+        }
+
+        // Browse available sessions (public/client)
+        [HttpGet]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetAvailableSessions(
             [FromQuery] int? coachId = null,
             [FromQuery] int? sportId = null,
             [FromQuery] DateTime? date = null,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
+        {
+            var query = _dbContext.TrainingSessions
+                .Include(s => s.Sport)
+                .Include(s => s.Coach)
+                .Where(s => s.Status == SessionStatus.Scheduled &&
+                           s.SessionDate >= DateTime.UtcNow.Date);
+
+            if (coachId.HasValue)
             {
-                var query = _dbContext.TrainingSessions
-                    .Include(s => s.Sport)
-                    .Include(s => s.Coach)
-                    .Where(s => s.Status == SessionStatus.Scheduled &&
-                               s.SessionDate >= DateTime.UtcNow.Date);
+                query = query.Where(s => s.CoachID == coachId.Value);
+            }
 
-                // Filter by coach
-                if (coachId.HasValue)
+            if (sportId.HasValue)
+            {
+                query = query.Where(s => s.SportID == sportId.Value);
+            }
+
+            if (date.HasValue)
+            {
+                query = query.Where(s => s.SessionDate.Date == date.Value.Date);
+            }
+
+            query = query.Where(s =>
+                !s.MaxParticipants.HasValue ||
+                _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID) < s.MaxParticipants.Value);
+
+            var totalCount = await query.CountAsync();
+
+            List<string> availableDays = new();
+            List<object> upcomingAvailableDates = new();
+            if (coachId.HasValue)
+            {
+                var coachAvailability = await _dbContext.Coaches
+                    .Where(c => c.CoachID == coachId.Value)
+                    .Select(c => c.AvailabilityStatus)
+                    .FirstOrDefaultAsync();
+
+                availableDays = ParseAvailableDays(coachAvailability);
+                upcomingAvailableDates = BuildUpcomingAvailabilityDates(availableDays);
+            }
+
+            var sessions = await query
+                .OrderBy(s => s.SessionDate)
+                .ThenBy(s => s.Start_Time)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(s => new
                 {
-                    query = query.Where(s => s.CoachID == coachId.Value);
-                }
-
-                // Filter by sport
-                if (sportId.HasValue)
-                {
-                    query = query.Where(s => s.SportID == sportId.Value);
-                }
-
-                // Filter by date
-                if (date.HasValue)
-                {
-                    query = query.Where(s => s.SessionDate.Date == date.Value.Date);
-                }
-
-                query = query.Where(s =>
-                    !s.MaxParticipants.HasValue ||
-                    _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID) < s.MaxParticipants.Value);
-
-                var totalCount = await query.CountAsync();
-
-                var sessions = await query
-                    .OrderBy(s => s.SessionDate)
-                    .ThenBy(s => s.Start_Time)
-                    .Skip((page - 1) * pageSize)
-                    .Take(pageSize)
-                    .Select(s => new
+                    s.SessionID,
+                    s.SessionDate,
+                    s.SessionType,
+                    s.Location,
+                    s.MaxParticipants,
+                    s.Start_Time,
+                    s.End_Time,
+                    SportName = s.Sport.Name,
+                    SportID = s.SportID,
+                    Price = _dbContext.CoachSports
+                        .Where(cs => cs.CoachID == s.CoachID && cs.SportID == s.SportID)
+                        .Select(cs => cs.PricePerSession)
+                        .FirstOrDefault(),
+                    Coach = new
                     {
-                        s.SessionID,
-                        s.SessionDate,
-                        s.SessionType,
-                        s.Location,
-                        s.MaxParticipants,
-                        s.Start_Time,
-                        s.End_Time,
-                        SportName = s.Sport.Name,
-                        SportID = s.SportID,
-                        Price = _dbContext.CoachSports
-                            .Where(cs => cs.CoachID == s.CoachID && cs.SportID == s.SportID)
-                            .Select(cs => cs.PricePerSession)
-                            .FirstOrDefault(),
-                        Coach = new
-                        {
-                            s.Coach.CoachID,
-                            Name = s.Coach.F_name + " " + s.Coach.L_name,
-                            s.Coach.AvgRating,
-                            s.Coach.ExperienceYears,
-                            VerificationStatus = s.Coach.VerificationStatus.ToString()
-                        },
-                        AvailableSlots = s.MaxParticipants - _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID)
-                    })
-                    .ToListAsync();
+                        s.Coach.CoachID,
+                        Name = s.Coach.F_name + " " + s.Coach.L_name,
+                        s.Coach.AvgRating,
+                        s.Coach.ExperienceYears,
+                        VerificationStatus = s.Coach.VerificationStatus.ToString()
+                    },
+                    AvailableSlots = s.MaxParticipants - _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID)
+                })
+                .ToListAsync();
 
-                return Ok(new
-                {
-                    totalCount,
-                    page,
-                    pageSize,
-                    totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
-                    sessions
-                });
-            }
-
-            // Update session (coach only)
-            [HttpPut("{sessionId}")]
-            [Authorize(Roles = "Coach")]
-            public async Task<IActionResult> UpdateSession(int sessionId, UpdateSessionDto dto)
+            return Ok(new
             {
-                // Get current user (coach)
-                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                if (!int.TryParse(userIdClaim, out int userId))
-                {
-                    return Unauthorized();
-                }
-
-                // Get coach ID
-                var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId);
-                if (coach == null)
-                {
-                    return NotFound(new { error = "Coach profile not found" });
-                }
-
-                // Get session
-                var session = await _dbContext.TrainingSessions.FindAsync(sessionId);
-                if (session == null)
-                {
-                    return NotFound(new { error = "Session not found" });
-                }
-
-                // Verify ownership
-                if (session.CoachID != coach.CoachID)
-                {
-                    return Forbid();
-                }
-
-                // Update fields (only if provided)
-                if (dto.SessionDate.HasValue)
-                    session.SessionDate = dto.SessionDate.Value;
-
-                if (!string.IsNullOrEmpty(dto.SessionType))
-                    session.SessionType = dto.SessionType;
-
-                if (!string.IsNullOrEmpty(dto.Location))
-                    session.Location = dto.Location;
-
-                if (dto.MaxParticipants.HasValue)
-                    session.MaxParticipants = dto.MaxParticipants.Value;
-
-                if (dto.Start_Time.HasValue)
-                    session.Start_Time = dto.Start_Time.Value;
-
-                if (dto.End_Time.HasValue)
-                    session.End_Time = dto.End_Time.Value;
-
-                if (!string.IsNullOrEmpty(dto.Status) && Enum.TryParse<SessionStatus>(dto.Status, out var status))
-                    session.Status = status;
-
-                await _dbContext.SaveChangesAsync();
-
-                return Ok(new { message = "Session updated successfully" });
-            }
-
-            // Delete/Cancel session (coach only)
-            [HttpDelete("{sessionId}")]
-            [Authorize(Roles = "Coach")]
-            public async Task<IActionResult> CancelSession(int sessionId)
-            {
-                // Get current user (coach)
-                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                if (!int.TryParse(userIdClaim, out int userId))
-                {
-                    return Unauthorized();
-                }
-
-                // Get coach ID
-                var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId);
-                if (coach == null)
-                {
-                    return NotFound(new { error = "Coach profile not found" });
-                }
-
-                // Get session
-                var session = await _dbContext.TrainingSessions.FindAsync(sessionId);
-                if (session == null)
-                {
-                    return NotFound(new { error = "Session not found" });
-                }
-
-                // Verify ownership
-                if (session.CoachID != coach.CoachID)
-                {
-                    return Forbid();
-                }
-
-                // Mark as cancelled
-                session.Status = SessionStatus.Cancelled;
-                await _dbContext.SaveChangesAsync();
-
-                // TODO: Notify booked clients about cancellation
-
-                return Ok(new { message = "Session cancelled successfully" });
-            }
+                totalCount,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                availableDays,
+                upcomingAvailableDates,
+                hasProfileAvailability = availableDays.Any(),
+                hasRealSessions = totalCount > 0,
+                sessions
+            });
         }
-    } 
+
+        // Update session (coach only)
+        [HttpPut("{sessionId}")]
+        [Authorize(Roles = "Coach")]
+        public async Task<IActionResult> UpdateSession(int sessionId, UpdateSessionDto dto)
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized();
+            }
+
+            var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId);
+            if (coach == null)
+            {
+                return NotFound(new { error = "Coach profile not found" });
+            }
+
+            var session = await _dbContext.TrainingSessions.FindAsync(sessionId);
+            if (session == null)
+            {
+                return NotFound(new { error = "Session not found" });
+            }
+
+            if (session.CoachID != coach.CoachID)
+            {
+                return Forbid();
+            }
+
+            if (dto.SessionDate.HasValue)
+                session.SessionDate = dto.SessionDate.Value;
+
+            if (!string.IsNullOrEmpty(dto.SessionType))
+                session.SessionType = dto.SessionType;
+
+            if (!string.IsNullOrEmpty(dto.Location))
+                session.Location = dto.Location;
+
+            if (dto.MaxParticipants.HasValue)
+                session.MaxParticipants = dto.MaxParticipants.Value;
+
+            if (dto.Start_Time.HasValue)
+                session.Start_Time = dto.Start_Time.Value;
+
+            if (dto.End_Time.HasValue)
+                session.End_Time = dto.End_Time.Value;
+
+            if (!string.IsNullOrEmpty(dto.Status) && Enum.TryParse<SessionStatus>(dto.Status, out var status))
+                session.Status = status;
+
+            await _dbContext.SaveChangesAsync();
+
+            return Ok(new { message = "Session updated successfully" });
+        }
+
+        // Delete/Cancel session (coach only)
+        [HttpDelete("{sessionId}")]
+        [Authorize(Roles = "Coach")]
+        public async Task<IActionResult> CancelSession(int sessionId)
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized();
+            }
+
+            var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId);
+            if (coach == null)
+            {
+                return NotFound(new { error = "Coach profile not found" });
+            }
+
+            var session = await _dbContext.TrainingSessions.FindAsync(sessionId);
+            if (session == null)
+            {
+                return NotFound(new { error = "Session not found" });
+            }
+
+            if (session.CoachID != coach.CoachID)
+            {
+                return Forbid();
+            }
+
+            session.Status = SessionStatus.Cancelled;
+            await _dbContext.SaveChangesAsync();
+
+            return Ok(new { message = "Session cancelled successfully" });
+        }
+    }
+}
