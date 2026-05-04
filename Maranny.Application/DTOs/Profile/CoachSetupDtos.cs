@@ -28,6 +28,10 @@ namespace Maranny.Application.DTOs.Profile
         [MinLength(1, ErrorMessage = "At least one available day is required")]
         public List<string> AvailableDays { get; set; } = new();
 
+        [Required]
+        [MinLength(1, ErrorMessage = "At least one available hour is required")]
+        public List<string> AvailableHours { get; set; } = new();
+
         [MaxLength(1000)]
         public string? Bio { get; set; }
 

@@ -3,11 +3,12 @@ using Maranny.Core.Entities;
 using Maranny.Core.Enums;
 using Maranny.Core.Interfaces;
 using Maranny.Infrastructure.Data;
-using Maranny.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace Maranny.API.Controllers
 {
@@ -30,60 +31,51 @@ namespace Maranny.API.Controllers
             _paymentService = paymentService;
         }
 
-        // Book a session
         [HttpPost]
         [Authorize(Roles = "Client")]
         public async Task<IActionResult> BookSession(CreateBookingDto dto)
         {
-            // Get current user (client)
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdClaim, out int userId))
+            if (!int.TryParse(userIdClaim, out var userId))
             {
                 return Unauthorized();
             }
 
-            // Get client ID
             var client = await _dbContext.Clients.FirstOrDefaultAsync(c => c.UserId == userId);
             if (client == null)
             {
                 return NotFound(new { error = "Client profile not found" });
             }
 
-            // Get session
-            var session = await _dbContext.TrainingSessions
-                .Include(s => s.Coach)
-                .FirstOrDefaultAsync(s => s.SessionID == dto.SessionID);
-
-            if (session == null)
+            var resolution = await ResolveBookingSessionAsync(dto);
+            if (resolution.ErrorResult != null)
             {
-                return NotFound(new { error = "Session not found" });
+                return resolution.ErrorResult;
             }
 
-            // Validate session is scheduled
+            var session = resolution.Session!;
+
             if (session.Status != SessionStatus.Scheduled)
             {
                 return BadRequest(new { error = "Session is not available for booking" });
             }
 
-            // Validate session is in the future
             var sessionDateTime = session.SessionDate.Add(session.Start_Time);
             if (sessionDateTime <= DateTime.UtcNow)
             {
                 return BadRequest(new { error = "Cannot book past sessions" });
             }
 
-            // Check if session is full
-            var currentBookings = await _dbContext.ClientSessions
-                .CountAsync(cs => cs.SessionID == dto.SessionID);
-
-            if (currentBookings >= session.MaxParticipants)
+            var currentBookings = await GetActiveBookingCountAsync(session.SessionID);
+            if (session.MaxParticipants.HasValue && currentBookings >= session.MaxParticipants.Value)
             {
                 return BadRequest(new { error = "Session is fully booked" });
             }
 
-            // Check if client already booked this session
-            var existingBooking = await _dbContext.ClientSessions
-                .FirstOrDefaultAsync(cs => cs.ClientID == client.ClientID && cs.SessionID == dto.SessionID);
+            var existingBooking = await _dbContext.Bookings
+                .FirstOrDefaultAsync(b => b.ClientID == client.ClientID &&
+                                          b.SessionID == session.SessionID &&
+                                          b.Status != BookingStatus.Cancelled);
 
             if (existingBooking != null)
             {
@@ -91,20 +83,20 @@ namespace Maranny.API.Controllers
             }
 
             var sessionPrice = await GetSessionPriceAsync(session.CoachID, session.SportID);
-            if (sessionPrice == null)
+            if (sessionPrice == null || sessionPrice.Value <= 0)
             {
                 return BadRequest(new { error = "Session price is not configured for this coach and sport" });
             }
 
-            // Check for overlapping bookings
-            var overlappingBooking = await _dbContext.ClientSessions
-                .Include(cs => cs.TrainingSession)
-                .Where(cs => cs.ClientID == client.ClientID &&
-                            cs.TrainingSession.SessionDate.Date == session.SessionDate.Date &&
-                            cs.TrainingSession.Status != SessionStatus.Cancelled &&
-                            ((session.Start_Time >= cs.TrainingSession.Start_Time && session.Start_Time < cs.TrainingSession.End_Time) ||
-                             (session.End_Time > cs.TrainingSession.Start_Time && session.End_Time <= cs.TrainingSession.End_Time) ||
-                             (session.Start_Time <= cs.TrainingSession.Start_Time && session.End_Time >= cs.TrainingSession.End_Time)))
+            var overlappingBooking = await _dbContext.Bookings
+                .Include(b => b.TrainingSession)
+                .Where(b => b.ClientID == client.ClientID &&
+                            (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed) &&
+                            b.TrainingSession.SessionDate.Date == session.SessionDate.Date &&
+                            b.TrainingSession.Status != SessionStatus.Cancelled &&
+                            ((session.Start_Time >= b.TrainingSession.Start_Time && session.Start_Time < b.TrainingSession.End_Time) ||
+                             (session.End_Time > b.TrainingSession.Start_Time && session.End_Time <= b.TrainingSession.End_Time) ||
+                             (session.Start_Time <= b.TrainingSession.Start_Time && session.End_Time >= b.TrainingSession.End_Time)))
                 .FirstOrDefaultAsync();
 
             if (overlappingBooking != null)
@@ -112,55 +104,56 @@ namespace Maranny.API.Controllers
                 return BadRequest(new { error = "You have an overlapping booking at this time" });
             }
 
-            // Create booking
             var booking = new Booking
             {
-                SessionID = dto.SessionID,
+                SessionID = session.SessionID,
                 ClientID = client.ClientID,
                 BookingDate = DateTime.UtcNow,
                 Status = BookingStatus.Pending
             };
             _dbContext.Bookings.Add(booking);
 
-            // Create client-session relationship
-            var clientSession = new ClientSession
-            {
-                ClientID = client.ClientID,
-                SessionID = dto.SessionID
-            };
-            _dbContext.ClientSessions.Add(clientSession);
+            var hasClientSessionLink = await _dbContext.ClientSessions
+                .AnyAsync(cs => cs.ClientID == client.ClientID && cs.SessionID == session.SessionID);
 
-            // Track user interaction
-            var interaction = new UserInteraction
+            if (!hasClientSessionLink)
+            {
+                _dbContext.ClientSessions.Add(new ClientSession
+                {
+                    ClientID = client.ClientID,
+                    SessionID = session.SessionID
+                });
+            }
+
+            _dbContext.UserInteractions.Add(new UserInteraction
             {
                 UserId = userId,
                 CoachId = session.CoachID,
                 Type = "Booking",
                 Timestamp = DateTime.UtcNow,
                 Context = $"Booked session {session.SessionID}"
-            };
-            _dbContext.UserInteractions.Add(interaction);
+            });
 
             await _dbContext.SaveChangesAsync();
 
             await _notificationService.SendNotificationAsync(
-            session.Coach.UserId,
-            "New Booking",
-            $"You have a new booking for {session.SessionDate:MMM dd} at {session.Start_Time}",
-            Core.Enums.NotificationType.BookingConfirmation
-            );
+                session.Coach.UserId,
+                "New Booking",
+                $"You have a new booking for {session.SessionDate:MMM dd} at {session.Start_Time}",
+                NotificationType.BookingConfirmation);
 
             return Ok(new
             {
                 message = "Session booked successfully",
                 bookingId = booking.BookingID,
+                sessionId = session.SessionID,
                 note = "Proceed to payment method selection",
                 totalPrice = sessionPrice,
-                bookingStatus = booking.Status.ToString()
+                bookingStatus = booking.Status.ToString(),
+                autoCreatedSession = resolution.AutoCreatedSession
             });
         }
 
-        // Get my bookings
         [HttpGet("my")]
         [Authorize(Roles = "Client")]
         public async Task<IActionResult> GetMyBookings(
@@ -169,21 +162,18 @@ namespace Maranny.API.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
-            // Get current user (client)
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId))
             {
                 return Unauthorized();
             }
 
-            // Get client ID
             var client = await _dbContext.Clients.FirstOrDefaultAsync(c => c.UserId == userId);
             if (client == null)
             {
                 return NotFound(new { error = "Client profile not found" });
             }
 
-            // Get bookings
             var query = _dbContext.Bookings
                 .Include(b => b.TrainingSession)
                     .ThenInclude(s => s.Coach)
@@ -191,7 +181,6 @@ namespace Maranny.API.Controllers
                     .ThenInclude(s => s.Sport)
                 .Where(b => b.ClientID == client.ClientID);
 
-            // Filter by status if provided
             if (!string.IsNullOrEmpty(status) && Enum.TryParse<BookingStatus>(status, out var bookingStatus))
             {
                 query = query.Where(b => b.Status == bookingStatus);
@@ -559,6 +548,9 @@ namespace Maranny.API.Controllers
             booking.CancelledAt = DateTime.UtcNow;
             booking.CancelledByCoach = true;
             booking.CancellationReason = dto?.Reason ?? "Declined by coach";
+
+            await RemoveClientSessionLinkAsync(booking.ClientID, booking.SessionID);
+            await MarkPendingPaymentAsFailedAsync(booking.BookingID, "Booking declined by coach before payment completion.");
             await _dbContext.SaveChangesAsync();
 
             var clientUserId = await _dbContext.Clients
@@ -578,26 +570,22 @@ namespace Maranny.API.Controllers
             return Ok(new { message = "Booking declined successfully" });
         }
 
-        // Cancel booking
         [HttpPut("{bookingId}/cancel")]
         [Authorize(Roles = "Client")]
         public async Task<IActionResult> CancelBooking(int bookingId, [FromQuery] string? reason = null)
         {
-            // Get current user (client)
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId))
             {
                 return Unauthorized();
             }
 
-            // Get client ID
             var client = await _dbContext.Clients.FirstOrDefaultAsync(c => c.UserId == userId);
             if (client == null)
             {
                 return NotFound(new { error = "Client profile not found" });
             }
 
-            // Get booking with session and payment details
             var booking = await _dbContext.Bookings
                 .Include(b => b.TrainingSession)
                 .FirstOrDefaultAsync(b => b.BookingID == bookingId);
@@ -607,13 +595,11 @@ namespace Maranny.API.Controllers
                 return NotFound(new { error = "Booking not found" });
             }
 
-            // Verify ownership
             if (booking.ClientID != client.ClientID)
             {
                 return Forbid();
             }
 
-            // Validate booking can be cancelled
             if (booking.Status == BookingStatus.Cancelled)
             {
                 return BadRequest(new { error = "Booking is already cancelled" });
@@ -624,67 +610,59 @@ namespace Maranny.API.Controllers
                 return BadRequest(new { error = "Cannot cancel completed booking" });
             }
 
-            // Calculate session start time
             var sessionStartDateTime = booking.TrainingSession.SessionDate.Add(booking.TrainingSession.Start_Time);
-
-            // Check if session already started
             if (sessionStartDateTime <= DateTime.UtcNow)
             {
                 return BadRequest(new { error = "Cannot cancel booking for sessions that have already started" });
             }
 
-            // Calculate hours until session
             var hoursUntilSession = (sessionStartDateTime - DateTime.UtcNow).TotalHours;
 
-            // Update booking status
             booking.Status = BookingStatus.Cancelled;
             booking.CancelledAt = DateTime.UtcNow;
             booking.CancellationReason = reason ?? "Cancelled by client";
             booking.CancelledByCoach = false;
 
-            // Process refund if payment was made
             var payment = await _dbContext.Payments
                 .FirstOrDefaultAsync(p => p.BookingID == bookingId && p.Status == PaymentStatus.Completed);
 
-            string refundMessage = "";
+            string refundMessage = string.Empty;
 
             if (payment != null)
             {
-                decimal refundAmount = 0;
-                string refundReason = "";
+                decimal refundAmount;
+                string refundReason;
 
-                // REFUND POLICY: 24-hour window
                 if (hoursUntilSession >= 24)
                 {
-                    // Cancelled more than 24 hours before: 90% refund (platform keeps 10% service fee)
                     refundAmount = payment.Amount * 0.90m;
                     refundReason = $"Cancelled {hoursUntilSession:F1} hours before session. 90% refund issued (10% service fee retained).";
                     refundMessage = $"Refund of {refundAmount:F2} EGP will be processed (90% of payment). 10% service fee retained.";
                 }
                 else
                 {
-                    // Cancelled less than 24 hours before: No refund
                     refundAmount = 0;
                     refundReason = $"Cancelled only {hoursUntilSession:F1} hours before session. No refund as per cancellation policy.";
                     refundMessage = "No refund issued. Cancellation was within 24 hours of session start.";
                 }
 
-                // Process refund if applicable
                 if (refundAmount > 0)
                 {
                     await _paymentService.ProcessRefundAsync(payment.PaymentID, refundAmount, refundReason);
                 }
                 else
                 {
-                    // Mark payment as non-refundable
                     payment.RefundReason = refundReason;
-                    await _dbContext.SaveChangesAsync();
                 }
             }
+            else
+            {
+                await MarkPendingPaymentAsFailedAsync(booking.BookingID, "Booking cancelled by client before payment completion.");
+            }
 
+            await RemoveClientSessionLinkAsync(booking.ClientID, booking.SessionID);
             await _dbContext.SaveChangesAsync();
 
-            // Notify coach about cancellation
             var coachUserId = await _dbContext.Coaches
                 .Where(c => c.CoachID == booking.TrainingSession.CoachID)
                 .Select(c => c.UserId)
@@ -696,53 +674,44 @@ namespace Maranny.API.Controllers
                     coachUserId,
                     "Booking Cancelled",
                     $"A booking for {booking.TrainingSession.SessionDate:MMM dd} has been cancelled by the client",
-                    Core.Enums.NotificationType.BookingCancellation
-                );
+                    NotificationType.BookingCancellation);
             }
 
             return Ok(new
             {
                 message = "Booking cancelled successfully",
                 refundInfo = refundMessage,
-                hoursUntilSession = hoursUntilSession
+                hoursUntilSession
             });
         }
 
-        // Coach cancels session - Full refund to all clients
         [HttpPut("session/{sessionId}/cancel-by-coach")]
         [Authorize(Roles = "Coach")]
         public async Task<IActionResult> CoachCancelSession(int sessionId, [FromQuery] string? reason = null)
         {
-            // Get current user (coach)
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId))
             {
                 return Unauthorized();
             }
 
-            // Get coach ID
             var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId);
             if (coach == null)
             {
                 return NotFound(new { error = "Coach profile not found" });
             }
 
-            // Get session
-            var session = await _dbContext.TrainingSessions
-                .FirstOrDefaultAsync(s => s.SessionID == sessionId);
-
+            var session = await _dbContext.TrainingSessions.FirstOrDefaultAsync(s => s.SessionID == sessionId);
             if (session == null)
             {
                 return NotFound(new { error = "Session not found" });
             }
 
-            // Verify ownership
             if (session.CoachID != coach.CoachID)
             {
                 return Forbid();
             }
 
-            // Check if session can be cancelled
             if (session.Status == SessionStatus.Cancelled)
             {
                 return BadRequest(new { error = "Session is already cancelled" });
@@ -759,7 +728,6 @@ namespace Maranny.API.Controllers
                 return BadRequest(new { error = "Cannot cancel session that has already started" });
             }
 
-            // Get all bookings for this session
             var bookings = await _dbContext.Bookings
                 .Where(b => b.SessionID == sessionId &&
                            (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed))
@@ -768,7 +736,6 @@ namespace Maranny.API.Controllers
             int refundedCount = 0;
             decimal totalRefunded = 0;
 
-            // Cancel all bookings and issue FULL refunds
             foreach (var booking in bookings)
             {
                 booking.Status = BookingStatus.Cancelled;
@@ -776,42 +743,46 @@ namespace Maranny.API.Controllers
                 booking.CancellationReason = reason ?? "Cancelled by coach";
                 booking.CancelledByCoach = true;
 
-                // Process FULL refund (100%) for coach cancellations
                 var payment = await _dbContext.Payments
-                    .FirstOrDefaultAsync(p => p.BookingID == booking.BookingID &&
-                                             p.Status == PaymentStatus.Completed);
+                    .FirstOrDefaultAsync(p => p.BookingID == booking.BookingID && p.Status == PaymentStatus.Completed);
 
                 if (payment != null)
                 {
-                    decimal fullRefund = payment.Amount; // 100% refund
+                    var fullRefund = payment.Amount;
                     await _paymentService.ProcessRefundAsync(
                         payment.PaymentID,
                         fullRefund,
-                        "Coach cancelled session. Full refund issued."
-                    );
+                        "Coach cancelled session. Full refund issued.");
 
                     refundedCount++;
                     totalRefunded += fullRefund;
+                }
+                else
+                {
+                    await MarkPendingPaymentAsFailedAsync(booking.BookingID, "Session cancelled by coach before payment completion.");
+                }
 
-                    // Notify client about cancellation and refund
-                    var clientUserId = await _dbContext.Clients
-                        .Where(c => c.ClientID == booking.ClientID)
-                        .Select(c => c.UserId)
-                        .FirstOrDefaultAsync();
+                await RemoveClientSessionLinkAsync(booking.ClientID, booking.SessionID);
 
-                    if (clientUserId != 0)
-                    {
-                        await _notificationService.SendNotificationAsync(
-                            clientUserId,
-                            "Session Cancelled by Coach",
-                            $"Your session on {session.SessionDate:MMM dd} has been cancelled. Full refund of {fullRefund:F2} EGP will be processed.",
-                            Core.Enums.NotificationType.BookingCancellation
-                        );
-                    }
+                var clientUserId = await _dbContext.Clients
+                    .Where(c => c.ClientID == booking.ClientID)
+                    .Select(c => c.UserId)
+                    .FirstOrDefaultAsync();
+
+                if (clientUserId != 0)
+                {
+                    var cancellationMessage = payment != null
+                        ? $"Your session on {session.SessionDate:MMM dd} has been cancelled. Full refund of {payment.Amount:F2} EGP will be processed."
+                        : $"Your session on {session.SessionDate:MMM dd} has been cancelled by the coach.";
+
+                    await _notificationService.SendNotificationAsync(
+                        clientUserId,
+                        "Session Cancelled by Coach",
+                        cancellationMessage,
+                        NotificationType.BookingCancellation);
                 }
             }
 
-            // Cancel the session
             session.Status = SessionStatus.Cancelled;
             await _dbContext.SaveChangesAsync();
 
@@ -821,8 +792,155 @@ namespace Maranny.API.Controllers
                 bookingsCancelled = bookings.Count,
                 refundsIssued = refundedCount,
                 totalRefundAmount = totalRefunded,
-                note = "All clients received full refunds (100%)"
+                note = "All affected bookings were cancelled successfully"
             });
+        }
+
+        private async Task<ResolvedSessionResult> ResolveBookingSessionAsync(CreateBookingDto dto)
+        {
+            if (dto.SessionID.HasValue && dto.SessionID.Value > 0)
+            {
+                var existingSession = await _dbContext.TrainingSessions
+                    .Include(s => s.Coach)
+                    .FirstOrDefaultAsync(s => s.SessionID == dto.SessionID.Value);
+
+                return existingSession == null
+                    ? new ResolvedSessionResult { ErrorResult = NotFound(new { error = "Session not found" }) }
+                    : new ResolvedSessionResult { Session = existingSession, AutoCreatedSession = false };
+            }
+
+            if (!dto.CoachID.HasValue || !dto.SportID.HasValue || !dto.SessionDate.HasValue || string.IsNullOrWhiteSpace(dto.StartTime))
+            {
+                return new ResolvedSessionResult
+                {
+                    ErrorResult = BadRequest(new
+                    {
+                        error = "Provide either SessionID or CoachID, SportID, SessionDate and StartTime to create a booking"
+                    })
+                };
+            }
+
+            var coach = await _dbContext.Coaches
+                .Include(c => c.CoachLocations)
+                .FirstOrDefaultAsync(c => c.CoachID == dto.CoachID.Value);
+
+            if (coach == null)
+            {
+                return new ResolvedSessionResult { ErrorResult = NotFound(new { error = "Coach not found" }) };
+            }
+
+            if (coach.VerificationStatus != VerificationStatus.Verified && coach.VerificationStatus != VerificationStatus.Approved)
+            {
+                return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Coach must be verified before accepting bookings" }) };
+            }
+
+            var coachCanTeachSport = await _dbContext.CoachSports
+                .AnyAsync(cs => cs.CoachID == coach.CoachID && cs.SportID == dto.SportID.Value);
+
+            if (!coachCanTeachSport)
+            {
+                return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Coach does not offer this sport" }) };
+            }
+
+            var startTime = ParseFlexibleTime(dto.StartTime);
+            if (!startTime.HasValue)
+            {
+                return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Invalid start time format" }) };
+            }
+
+            var endTime = ParseFlexibleTime(dto.EndTime) ?? startTime.Value.Add(TimeSpan.FromHours(1));
+            if (endTime <= startTime)
+            {
+                return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "End time must be after start time" }) };
+            }
+
+            var sessionDate = dto.SessionDate.Value.Date;
+            if (sessionDate < DateTime.UtcNow.Date || (sessionDate == DateTime.UtcNow.Date && startTime.Value <= DateTime.UtcNow.TimeOfDay))
+            {
+                return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Cannot book a past time slot" }) };
+            }
+
+            var availability = ParseAvailability(coach.AvailabilityStatus);
+            var selectedDay = sessionDate.DayOfWeek.ToString();
+            if (availability.AvailableDays.Any() && !availability.AvailableDays.Any(day => day.Equals(selectedDay, StringComparison.OrdinalIgnoreCase)))
+            {
+                return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Coach is not available on the selected day" }) };
+            }
+
+            var selectedSlot = availability.DayHourSlots
+                .FirstOrDefault(slot => slot.Day.Equals(selectedDay, StringComparison.OrdinalIgnoreCase));
+            var allowedHours = (selectedSlot?.Hours?.Any() == true ? selectedSlot.Hours : availability.AvailableHours) ?? new List<string>();
+            if (allowedHours.Any() && !allowedHours.Any(hour => TimesMatch(hour, startTime.Value)))
+            {
+                return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Coach is not available at the selected hour" }) };
+            }
+
+            var overlappingSession = await _dbContext.TrainingSessions
+                .Include(s => s.Coach)
+                .Where(s => s.CoachID == coach.CoachID &&
+                            s.SessionDate.Date == sessionDate &&
+                            s.Status != SessionStatus.Cancelled &&
+                            ((startTime.Value >= s.Start_Time && startTime.Value < s.End_Time) ||
+                             (endTime > s.Start_Time && endTime <= s.End_Time) ||
+                             (startTime.Value <= s.Start_Time && endTime >= s.End_Time)))
+                .OrderBy(s => s.SessionDate)
+                .ThenBy(s => s.Start_Time)
+                .FirstOrDefaultAsync();
+
+            if (overlappingSession != null)
+            {
+                return new ResolvedSessionResult { Session = overlappingSession, AutoCreatedSession = false };
+            }
+
+            var newSession = new TrainingSession
+            {
+                CoachID = coach.CoachID,
+                Coach = coach,
+                SportID = dto.SportID.Value,
+                SessionDate = sessionDate,
+                SessionType = dto.SessionType ?? "Private Session",
+                Location = dto.Location ?? coach.CoachLocations.Select(cl => cl.WorkingLocation).FirstOrDefault(),
+                MaxParticipants = dto.MaxParticipants ?? 1,
+                Start_Time = startTime.Value,
+                End_Time = endTime,
+                Status = SessionStatus.Scheduled
+            };
+
+            _dbContext.TrainingSessions.Add(newSession);
+            await _dbContext.SaveChangesAsync();
+
+            return new ResolvedSessionResult { Session = newSession, AutoCreatedSession = true };
+        }
+
+        private async Task<int> GetActiveBookingCountAsync(int sessionId)
+        {
+            return await _dbContext.Bookings
+                .CountAsync(b => b.SessionID == sessionId &&
+                                 (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed));
+        }
+
+        private async Task RemoveClientSessionLinkAsync(int clientId, int sessionId)
+        {
+            var link = await _dbContext.ClientSessions
+                .FirstOrDefaultAsync(cs => cs.ClientID == clientId && cs.SessionID == sessionId);
+
+            if (link != null)
+            {
+                _dbContext.ClientSessions.Remove(link);
+            }
+        }
+
+        private async Task MarkPendingPaymentAsFailedAsync(int bookingId, string reason)
+        {
+            var pendingPayments = await _dbContext.Payments
+                .Where(p => p.BookingID == bookingId && p.Status == PaymentStatus.Pending)
+                .ToListAsync();
+
+            foreach (var pendingPayment in pendingPayments)
+            {
+                pendingPayment.Status = PaymentStatus.Failed;
+                pendingPayment.RefundReason = reason;
+            }
         }
 
         private async Task<decimal?> GetSessionPriceAsync(int coachId, int sportId)
@@ -832,7 +950,103 @@ namespace Maranny.API.Controllers
                 .Select(cs => cs.PricePerSession)
                 .FirstOrDefaultAsync();
         }
+
+        private static TimeSpan? ParseFlexibleTime(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            if (TimeSpan.TryParse(value, out var parsedTimeSpan))
+            {
+                return parsedTimeSpan;
+            }
+
+            var formats = new[] { "h:mm tt", "hh:mm tt", "h:mmtt", "hh:mmtt", "H:mm", "HH:mm" };
+            if (DateTime.TryParseExact(value.Trim(), formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDateTime))
+            {
+                return parsedDateTime.TimeOfDay;
+            }
+
+            return DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedDateTime)
+                ? parsedDateTime.TimeOfDay
+                : null;
+        }
+
+        private static bool TimesMatch(string availabilityHour, TimeSpan selectedTime)
+        {
+            var parsedAvailability = ParseFlexibleTime(availabilityHour);
+            return parsedAvailability.HasValue && parsedAvailability.Value == selectedTime;
+        }
+
+        private static AvailabilityPayload ParseAvailability(string? availabilityStatus)
+        {
+            if (string.IsNullOrWhiteSpace(availabilityStatus))
+            {
+                return new AvailabilityPayload();
+            }
+
+            var trimmed = availabilityStatus.Trim();
+            if (trimmed.StartsWith("{"))
+            {
+                try
+                {
+                    var payload = JsonSerializer.Deserialize<AvailabilityPayload>(trimmed) ?? new AvailabilityPayload();
+                    payload.AvailableDays ??= new List<string>();
+                    payload.AvailableHours ??= new List<string>();
+                    payload.DayHourSlots ??= new List<DayHourSlot>();
+                    if (payload.DayHourSlots.Count == 0 && payload.AvailableDays.Count > 0)
+                    {
+                        payload.DayHourSlots = payload.AvailableDays.Select(day => new DayHourSlot
+                        {
+                            Day = day,
+                            Hours = payload.AvailableHours.ToList()
+                        }).ToList();
+                    }
+                    return payload;
+                }
+                catch
+                {
+                    return new AvailabilityPayload();
+                }
+            }
+
+            var legacyDays = trimmed
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(day => !string.IsNullOrWhiteSpace(day))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return new AvailabilityPayload
+            {
+                AvailableDays = legacyDays,
+                DayHourSlots = legacyDays.Select(day => new DayHourSlot
+                {
+                    Day = day,
+                    Hours = new List<string>()
+                }).ToList()
+            };
+        }
+
+        private sealed class ResolvedSessionResult
+        {
+            public TrainingSession? Session { get; set; }
+            public IActionResult? ErrorResult { get; set; }
+            public bool AutoCreatedSession { get; set; }
+        }
+
+        private sealed class DayHourSlot
+        {
+            public string Day { get; set; } = string.Empty;
+            public List<string> Hours { get; set; } = new();
+        }
+
+        private sealed class AvailabilityPayload
+        {
+            public List<string> AvailableDays { get; set; } = new();
+            public List<string> AvailableHours { get; set; } = new();
+            public List<DayHourSlot> DayHourSlots { get; set; } = new();
+        }
     }
 }
-
-

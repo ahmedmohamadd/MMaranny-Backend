@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using Google.Apis.Auth;
+using System.Text.Json;
 
 namespace Maranny.API.Controllers
 {
@@ -287,6 +288,7 @@ namespace Maranny.API.Controllers
                             coachOnboardingState.HasFullName,
                             coachOnboardingState.HasNationalId,
                             coachOnboardingState.HasAvailableDays,
+                            coachOnboardingState.HasAvailableHours,
                             coachOnboardingState.HasExperienceYears,
                             coachOnboardingState.HasSportSelection,
                             coachOnboardingState.HasLocation,
@@ -834,11 +836,7 @@ namespace Maranny.API.Controllers
             coach.Bio = dto.Bio?.Trim();
             coach.ExperienceYears = dto.ExperienceYears;
             coach.CertificateUrl = dto.CertificateUrl?.Trim();
-            coach.AvailabilityStatus = string.Join(",",
-                dto.AvailableDays
-                    .Where(d => !string.IsNullOrWhiteSpace(d))
-                    .Select(d => d.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase));
+            coach.AvailabilityStatus = SerializeAvailability(dto.AvailableDays, dto.AvailableHours);
         }
 
         private async Task<CoachOnboardingState> BuildCoachOnboardingStateAsync(Coach coach)
@@ -852,7 +850,9 @@ namespace Maranny.API.Controllers
 
             var hasFullName = !string.IsNullOrWhiteSpace(coach.F_name);
             var hasNationalId = !string.IsNullOrWhiteSpace(coach.ID);
-            var hasAvailableDays = !string.IsNullOrWhiteSpace(coach.AvailabilityStatus);
+            var availability = ParseAvailability(coach.AvailabilityStatus);
+            var hasAvailableDays = availability.AvailableDays.Any();
+            var hasAvailableHours = availability.AvailableHours.Any();
             var hasExperienceYears = coach.ExperienceYears.HasValue;
             var hasSportSelection = sportRows.Count > 0;
             var hasSessionPrice = sportRows.Any(cs => cs.PricePerSession > 0);
@@ -861,16 +861,106 @@ namespace Maranny.API.Controllers
                 hasFullName,
                 hasNationalId,
                 hasAvailableDays,
+                hasAvailableHours,
                 hasExperienceYears,
                 hasSportSelection,
                 hasLocation,
                 hasSessionPrice);
         }
 
+        private static string SerializeAvailability(IEnumerable<string>? availableDays, IEnumerable<string>? availableHours)
+        {
+            var days = (availableDays ?? Enumerable.Empty<string>())
+                .Where(d => !string.IsNullOrWhiteSpace(d))
+                .Select(d => d.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var hours = (availableHours ?? Enumerable.Empty<string>())
+                .Where(h => !string.IsNullOrWhiteSpace(h))
+                .Select(h => h.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return JsonSerializer.Serialize(new AvailabilityPayload
+            {
+                AvailableDays = days,
+                AvailableHours = hours,
+                DayHourSlots = days.Select(day => new DayHourSlot
+                {
+                    Day = day,
+                    Hours = hours.ToList()
+                }).ToList()
+            });
+        }
+
+        private static AvailabilityPayload ParseAvailability(string? availabilityStatus)
+        {
+            if (string.IsNullOrWhiteSpace(availabilityStatus))
+            {
+                return new AvailabilityPayload();
+            }
+
+            var trimmed = availabilityStatus.Trim();
+            if (trimmed.StartsWith("{"))
+            {
+                try
+                {
+                    var payload = JsonSerializer.Deserialize<AvailabilityPayload>(trimmed) ?? new AvailabilityPayload();
+                    payload.AvailableDays ??= new List<string>();
+                    payload.AvailableHours ??= new List<string>();
+                    payload.DayHourSlots ??= new List<DayHourSlot>();
+                    if (payload.DayHourSlots.Count == 0 && payload.AvailableDays.Count > 0)
+                    {
+                        payload.DayHourSlots = payload.AvailableDays.Select(day => new DayHourSlot
+                        {
+                            Day = day,
+                            Hours = payload.AvailableHours.ToList()
+                        }).ToList();
+                    }
+                    return payload;
+                }
+                catch
+                {
+                    return new AvailabilityPayload();
+                }
+            }
+
+            var legacyDays = trimmed
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(d => !string.IsNullOrWhiteSpace(d))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return new AvailabilityPayload
+            {
+                AvailableDays = legacyDays,
+                DayHourSlots = legacyDays.Select(day => new DayHourSlot
+                {
+                    Day = day,
+                    Hours = new List<string>()
+                }).ToList()
+            };
+        }
+
+        private sealed class DayHourSlot
+        {
+            public string Day { get; set; } = string.Empty;
+            public List<string> Hours { get; set; } = new();
+        }
+
+        private sealed class AvailabilityPayload
+        {
+            public List<string> AvailableDays { get; set; } = new();
+            public List<string> AvailableHours { get; set; } = new();
+            public List<DayHourSlot> DayHourSlots { get; set; } = new();
+        }
+
         private sealed record CoachOnboardingState(
             bool HasFullName,
             bool HasNationalId,
             bool HasAvailableDays,
+            bool HasAvailableHours,
             bool HasExperienceYears,
             bool HasSportSelection,
             bool HasLocation,
@@ -880,6 +970,7 @@ namespace Maranny.API.Controllers
                 HasFullName &&
                 HasNationalId &&
                 HasAvailableDays &&
+                HasAvailableHours &&
                 HasExperienceYears &&
                 HasSportSelection &&
                 HasLocation &&

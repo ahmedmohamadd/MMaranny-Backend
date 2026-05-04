@@ -39,6 +39,10 @@ namespace Maranny.Application.DTOs.Auth
         [MinLength(1)]
         public List<string> AvailableDays { get; set; } = new();
 
+        [Required]
+        [MinLength(1)]
+        public List<string> AvailableHours { get; set; } = new();
+
         [MaxLength(1000)]
         public string? Bio { get; set; }
 

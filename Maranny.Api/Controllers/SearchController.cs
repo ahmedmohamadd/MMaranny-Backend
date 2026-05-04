@@ -1,10 +1,11 @@
-﻿using Maranny.Application.DTOs.Search;
+using Maranny.Application.DTOs.Search;
 using Maranny.Core.Enums;
 using Maranny.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace Maranny.API.Controllers
 {
@@ -19,12 +20,10 @@ namespace Maranny.API.Controllers
             _dbContext = dbContext;
         }
 
-        // Search coaches with advanced filters
         [HttpGet("coaches")]
         [AllowAnonymous]
         public async Task<IActionResult> SearchCoaches([FromQuery] CoachSearchDto dto)
         {
-            // Build query
             var query = _dbContext.Coaches
                 .Include(c => c.User)
                 .Include(c => c.CoachLocations)
@@ -32,13 +31,11 @@ namespace Maranny.API.Controllers
                     .ThenInclude(cs => cs.Sport)
                 .Where(c => !c.User.IsBlocked);
 
-            // Filter by verification status (default: verified only)
             if (dto.VerifiedOnly ?? true)
             {
                 query = query.Where(c => c.VerificationStatus == VerificationStatus.Approved);
             }
 
-            // Filter by name
             if (!string.IsNullOrWhiteSpace(dto.Name))
             {
                 var nameLower = dto.Name.ToLower();
@@ -48,38 +45,32 @@ namespace Maranny.API.Controllers
                     c.L_name.ToLower().Contains(nameLower));
             }
 
-            // Filter by sport
             if (dto.SportID.HasValue)
             {
                 query = query.Where(c => c.CoachSports.Any(cs => cs.SportID == dto.SportID.Value));
             }
 
-            // Filter by city
             if (!string.IsNullOrWhiteSpace(dto.City))
             {
                 var cityLower = dto.City.ToLower();
                 query = query.Where(c => c.CoachLocations.Any(cl => cl.WorkingLocation.ToLower().Contains(cityLower)));
             }
 
-            // Filter by minimum rating
             if (dto.MinRating.HasValue)
             {
                 query = query.Where(c => c.AvgRating >= dto.MinRating.Value);
             }
 
-            // Filter by minimum experience
             if (dto.MinExperience.HasValue)
             {
                 query = query.Where(c => c.ExperienceYears >= dto.MinExperience.Value);
             }
 
-            // Filter by gender
             if (!string.IsNullOrWhiteSpace(dto.Gender) && Enum.TryParse<Gender>(dto.Gender, out var gender))
             {
                 query = query.Where(c => c.Gender == gender);
             }
 
-            // Apply sorting
             query = dto.SortBy?.ToLower() switch
             {
                 "rating" => dto.SortOrder?.ToLower() == "asc"
@@ -91,13 +82,11 @@ namespace Maranny.API.Controllers
                 "name" => dto.SortOrder?.ToLower() == "desc"
                     ? query.OrderByDescending(c => c.F_name)
                     : query.OrderBy(c => c.F_name),
-                _ => query.OrderByDescending(c => c.AvgRating) // Default: highest rated first
+                _ => query.OrderByDescending(c => c.AvgRating)
             };
 
-            // Get total count
             var totalCount = await query.CountAsync();
 
-            // Apply pagination
             var coaches = await query
                 .Skip((dto.Page - 1) * dto.PageSize)
                 .Take(dto.PageSize)
@@ -113,9 +102,9 @@ namespace Maranny.API.Controllers
                     verificationStatus = c.VerificationStatus.ToString(),
                     Email = c.User.Email,
                     PhoneNumber = c.User.PhoneNumber,
-                    AvailableDays = string.IsNullOrWhiteSpace(c.AvailabilityStatus)
-                        ? new List<string>()
-                        : c.AvailabilityStatus.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
+                    AvailableDays = ParseAvailability(c.AvailabilityStatus).AvailableDays,
+                    AvailableHours = ParseAvailability(c.AvailabilityStatus).AvailableHours,
+                    DayHourSlots = ParseAvailability(c.AvailabilityStatus).DayHourSlots,
                     StartingPrice = c.CoachSports
                         .Where(cs => cs.PricePerSession.HasValue)
                         .OrderBy(cs => cs.PricePerSession)
@@ -136,32 +125,29 @@ namespace Maranny.API.Controllers
 
             return Ok(new
             {
-                totalCount = totalCount,
+                totalCount,
                 page = dto.Page,
                 pageSize = dto.PageSize,
                 totalPages = (int)Math.Ceiling(totalCount / (double)dto.PageSize),
-                coaches = coaches
+                coaches
             });
         }
 
-        // Get coach details with sessions
         [HttpGet("coaches/{coachId}")]
         [AllowAnonymous]
         public async Task<IActionResult> GetCoachDetails(int coachId)
         {
-            // Track view interaction if user is authenticated
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (int.TryParse(userIdClaim, out int userId))
             {
-                var interaction = new Core.Entities.UserInteraction
+                _dbContext.UserInteractions.Add(new Core.Entities.UserInteraction
                 {
                     UserId = userId,
                     CoachId = coachId,
                     Type = "View",
                     Timestamp = DateTime.UtcNow,
                     Context = "Viewed coach profile"
-                };
-                _dbContext.UserInteractions.Add(interaction);
+                });
                 await _dbContext.SaveChangesAsync();
             }
 
@@ -177,7 +163,6 @@ namespace Maranny.API.Controllers
                 return NotFound(new { error = "Coach not found" });
             }
 
-            // Get upcoming sessions
             var upcomingSessions = await _dbContext.TrainingSessions
                 .Include(s => s.Sport)
                 .Where(s => s.CoachID == coachId &&
@@ -200,11 +185,12 @@ namespace Maranny.API.Controllers
                         .Where(cs => cs.CoachID == s.CoachID && cs.SportID == s.SportID)
                         .Select(cs => cs.PricePerSession)
                         .FirstOrDefault(),
-                    AvailableSlots = s.MaxParticipants - _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID)
+                    AvailableSlots = s.MaxParticipants.HasValue
+                        ? s.MaxParticipants.Value - _dbContext.Bookings.Count(b => b.SessionID == s.SessionID && (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed))
+                        : (int?)null
                 })
                 .ToListAsync();
 
-            // Get recent reviews
             var reviews = await _dbContext.Reviews
                 .Include(r => r.Client)
                 .Where(r => r.CoachID == coachId)
@@ -221,7 +207,7 @@ namespace Maranny.API.Controllers
                 })
                 .ToListAsync();
 
-            var result = new
+            return Ok(new
             {
                 coach.CoachID,
                 Name = coach.F_name + " " + coach.L_name,
@@ -234,9 +220,9 @@ namespace Maranny.API.Controllers
                 verificationStatus = coach.VerificationStatus.ToString(),
                 Email = coach.User.Email,
                 PhoneNumber = coach.User.PhoneNumber,
-                AvailableDays = string.IsNullOrWhiteSpace(coach.AvailabilityStatus)
-                    ? new List<string>()
-                    : coach.AvailabilityStatus.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
+                AvailableDays = ParseAvailability(coach.AvailabilityStatus).AvailableDays,
+                AvailableHours = ParseAvailability(coach.AvailabilityStatus).AvailableHours,
+                DayHourSlots = ParseAvailability(coach.AvailabilityStatus).DayHourSlots,
                 Sports = coach.CoachSports.Select(cs => new
                 {
                     sportID = cs.SportID,
@@ -249,9 +235,69 @@ namespace Maranny.API.Controllers
                 UpcomingSessions = upcomingSessions,
                 RecentReviews = reviews,
                 TotalReviews = await _dbContext.Reviews.CountAsync(r => r.CoachID == coachId)
-            };
+            });
+        }
 
-            return Ok(result);
+        private static AvailabilityPayload ParseAvailability(string? availabilityStatus)
+        {
+            if (string.IsNullOrWhiteSpace(availabilityStatus))
+            {
+                return new AvailabilityPayload();
+            }
+
+            var trimmed = availabilityStatus.Trim();
+            if (trimmed.StartsWith("{"))
+            {
+                try
+                {
+                    var payload = JsonSerializer.Deserialize<AvailabilityPayload>(trimmed) ?? new AvailabilityPayload();
+                    payload.AvailableDays ??= new List<string>();
+                    payload.AvailableHours ??= new List<string>();
+                    payload.DayHourSlots ??= new List<DayHourSlot>();
+                    if (payload.DayHourSlots.Count == 0 && payload.AvailableDays.Count > 0)
+                    {
+                        payload.DayHourSlots = payload.AvailableDays.Select(day => new DayHourSlot
+                        {
+                            Day = day,
+                            Hours = payload.AvailableHours.ToList()
+                        }).ToList();
+                    }
+                    return payload;
+                }
+                catch
+                {
+                    return new AvailabilityPayload();
+                }
+            }
+
+            var legacyDays = trimmed
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(d => !string.IsNullOrWhiteSpace(d))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return new AvailabilityPayload
+            {
+                AvailableDays = legacyDays,
+                DayHourSlots = legacyDays.Select(day => new DayHourSlot
+                {
+                    Day = day,
+                    Hours = new List<string>()
+                }).ToList()
+            };
+        }
+
+        private sealed class DayHourSlot
+        {
+            public string Day { get; set; } = string.Empty;
+            public List<string> Hours { get; set; } = new();
+        }
+
+        private sealed class AvailabilityPayload
+        {
+            public List<string> AvailableDays { get; set; } = new();
+            public List<string> AvailableHours { get; set; } = new();
+            public List<DayHourSlot> DayHourSlots { get; set; } = new();
         }
     }
 }
