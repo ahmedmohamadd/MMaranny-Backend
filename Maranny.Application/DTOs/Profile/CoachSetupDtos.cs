@@ -28,9 +28,9 @@ namespace Maranny.Application.DTOs.Profile
         [MinLength(1, ErrorMessage = "At least one available day is required")]
         public List<string> AvailableDays { get; set; } = new();
 
-        [Required]
-        [MinLength(1, ErrorMessage = "At least one available hour is required")]
         public List<string> AvailableHours { get; set; } = new();
+
+        public List<CoachAvailabilitySlotDto> DayHourSlots { get; set; } = new();
 
         [MaxLength(1000)]
         public string? Bio { get; set; }
@@ -55,5 +55,15 @@ namespace Maranny.Application.DTOs.Profile
 
         [Range(0, 60)]
         public int? ExperienceYears { get; set; }
+    }
+
+    public class CoachAvailabilitySlotDto
+    {
+        [Required]
+        [MaxLength(50)]
+        public string Day { get; set; } = string.Empty;
+
+        [MinLength(1)]
+        public List<string> Hours { get; set; } = new();
     }
 }

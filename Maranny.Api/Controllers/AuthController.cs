@@ -197,6 +197,11 @@ namespace Maranny.API.Controllers
                 });
             }
 
+            if (!HasAnyAvailableHours(dto.AvailableHours, dto.DayHourSlots))
+            {
+                return BadRequest(new { error = "At least one available hour is required" });
+            }
+
             ApplyCoachOnboarding(user.Coach, dto);
 
             var existingCoachSports = await _dbContext.CoachSports
@@ -836,7 +841,7 @@ namespace Maranny.API.Controllers
             coach.Bio = dto.Bio?.Trim();
             coach.ExperienceYears = dto.ExperienceYears;
             coach.CertificateUrl = dto.CertificateUrl?.Trim();
-            coach.AvailabilityStatus = SerializeAvailability(dto.AvailableDays, dto.AvailableHours);
+            coach.AvailabilityStatus = SerializeAvailability(dto.AvailableDays, dto.AvailableHours, dto.DayHourSlots);
         }
 
         private async Task<CoachOnboardingState> BuildCoachOnboardingStateAsync(Coach coach)
@@ -852,7 +857,7 @@ namespace Maranny.API.Controllers
             var hasNationalId = !string.IsNullOrWhiteSpace(coach.ID);
             var availability = ParseAvailability(coach.AvailabilityStatus);
             var hasAvailableDays = availability.AvailableDays.Any();
-            var hasAvailableHours = availability.AvailableHours.Any();
+            var hasAvailableHours = availability.AvailableHours.Any() || availability.DayHourSlots.Any(slot => slot.Hours.Any());
             var hasExperienceYears = coach.ExperienceYears.HasValue;
             var hasSportSelection = sportRows.Count > 0;
             var hasSessionPrice = sportRows.Any(cs => cs.PricePerSession > 0);
@@ -868,17 +873,61 @@ namespace Maranny.API.Controllers
                 hasSessionPrice);
         }
 
-        private static string SerializeAvailability(IEnumerable<string>? availableDays, IEnumerable<string>? availableHours)
+        private static string SerializeAvailability(
+            IEnumerable<string>? availableDays,
+            IEnumerable<string>? availableHours,
+            IEnumerable<CoachAvailabilitySlotDto>? dayHourSlots)
         {
-            var days = (availableDays ?? Enumerable.Empty<string>())
+            var requestedDays = (availableDays ?? Enumerable.Empty<string>())
                 .Where(d => !string.IsNullOrWhiteSpace(d))
                 .Select(d => d.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var hours = (availableHours ?? Enumerable.Empty<string>())
+            var normalizedSlots = (dayHourSlots ?? Enumerable.Empty<CoachAvailabilitySlotDto>())
+                .Where(slot => !string.IsNullOrWhiteSpace(slot.Day))
+                .Select(slot => new DayHourSlot
+                {
+                    Day = slot.Day.Trim(),
+                    Hours = (slot.Hours ?? new List<string>())
+                        .Where(h => !string.IsNullOrWhiteSpace(h))
+                        .Select(h => h.Trim())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                })
+                .Where(slot => slot.Hours.Count > 0)
+                .GroupBy(slot => slot.Day, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new DayHourSlot
+                {
+                    Day = group.First().Day,
+                    Hours = group.SelectMany(slot => slot.Hours)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                })
+                .ToList();
+
+            var days = normalizedSlots.Select(slot => slot.Day)
+                .Concat(requestedDays)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var fallbackHours = (availableHours ?? Enumerable.Empty<string>())
                 .Where(h => !string.IsNullOrWhiteSpace(h))
                 .Select(h => h.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (normalizedSlots.Count == 0 && days.Count > 0 && fallbackHours.Count > 0)
+            {
+                normalizedSlots = days.Select(day => new DayHourSlot
+                {
+                    Day = day,
+                    Hours = fallbackHours.ToList()
+                }).ToList();
+            }
+
+            var hours = normalizedSlots.SelectMany(slot => slot.Hours)
+                .Concat(fallbackHours)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -886,12 +935,15 @@ namespace Maranny.API.Controllers
             {
                 AvailableDays = days,
                 AvailableHours = hours,
-                DayHourSlots = days.Select(day => new DayHourSlot
-                {
-                    Day = day,
-                    Hours = hours.ToList()
-                }).ToList()
+                DayHourSlots = normalizedSlots
             });
+        }
+
+        private static bool HasAnyAvailableHours(IEnumerable<string>? availableHours, IEnumerable<CoachAvailabilitySlotDto>? dayHourSlots)
+        {
+            return (availableHours ?? Enumerable.Empty<string>()).Any(h => !string.IsNullOrWhiteSpace(h)) ||
+                   (dayHourSlots ?? Enumerable.Empty<CoachAvailabilitySlotDto>())
+                       .Any(slot => (slot.Hours ?? new List<string>()).Any(h => !string.IsNullOrWhiteSpace(h)));
         }
 
         private static AvailabilityPayload ParseAvailability(string? availabilityStatus)

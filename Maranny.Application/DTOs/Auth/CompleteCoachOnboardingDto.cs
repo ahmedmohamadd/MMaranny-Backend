@@ -39,9 +39,9 @@ namespace Maranny.Application.DTOs.Auth
         [MinLength(1)]
         public List<string> AvailableDays { get; set; } = new();
 
-        [Required]
-        [MinLength(1)]
         public List<string> AvailableHours { get; set; } = new();
+
+        public List<CoachAvailabilitySlotDto> DayHourSlots { get; set; } = new();
 
         [MaxLength(1000)]
         public string? Bio { get; set; }
@@ -57,5 +57,15 @@ namespace Maranny.Application.DTOs.Auth
 
         [MaxLength(1000)]
         public string? Description { get; set; }
+    }
+
+    public class CoachAvailabilitySlotDto
+    {
+        [Required]
+        [MaxLength(50)]
+        public string Day { get; set; } = string.Empty;
+
+        [MinLength(1)]
+        public List<string> Hours { get; set; } = new();
     }
 }
