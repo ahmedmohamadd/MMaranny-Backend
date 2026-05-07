@@ -88,9 +88,9 @@ namespace Maranny.API.Controllers
 
         [HttpPost]
         [Authorize(Roles = "Client,Coach")]
-        [Consumes("multipart/form-data", "application/json")]
+        [Consumes("multipart/form-data")]
         [RequestSizeLimit(20_000_000)]
-        public async Task<IActionResult> CreateProduct([FromForm] CreateProductDto dto, [FromForm] IFormFile? image = null, [FromForm] IFormFile? imageFile = null, [FromForm] IFormFile? file = null, [FromForm] IFormFile? productImage = null, [FromForm] IFormFile? productImageFile = null)
+        public async Task<IActionResult> CreateProduct([FromForm] CreateProductDto dto, [FromForm] IFormFile? image = null)
         {
             var userId = GetCurrentUserId();
             if (userId == null)
@@ -142,7 +142,7 @@ namespace Maranny.API.Controllers
                 Request.HasFormContentType,
                 Request.HasFormContentType ? Request.Form.Files.Count : 0,
                 Request.ContentType ?? string.Empty);
-            var imageUrl = await ResolveImageUrlAsync(dto, image, imageFile, file, productImage, productImageFile, Request.HasFormContentType ? Request.Form.Files : null);
+            var imageUrl = await ResolveImageUrlAsync(dto, image, Request.HasFormContentType ? Request.Form.Files : null);
 
             var product = new Product
             {
@@ -306,9 +306,8 @@ namespace Maranny.API.Controllers
 
         [HttpPut("{productId:int}")]
         [Authorize(Roles = "Client,Coach")]
-        [Consumes("multipart/form-data", "application/json")]
-        [RequestSizeLimit(20_000_000)]
-        public async Task<IActionResult> UpdateProduct(int productId, [FromForm] UpdateProductDto dto)
+        [Consumes("application/json")]
+        public async Task<IActionResult> UpdateProduct(int productId, [FromBody] UpdateProductDto dto)
         {
             var userId = GetCurrentUserId();
             if (userId == null)
@@ -478,19 +477,19 @@ namespace Maranny.API.Controllers
         private async Task<string?> ResolveImageUrlAsync(
             CreateProductDto dto,
             IFormFile? image,
-            IFormFile? imageFile,
-            IFormFile? file,
-            IFormFile? productImage,
-            IFormFile? productImageFile,
             IFormFileCollection? files)
         {
-            var resolvedFile = FirstNonEmptyFile(image, imageFile, file, productImage, productImageFile)
-                ?? files?.FirstOrDefault(candidate =>
-                    candidate.Name.Equals("image", StringComparison.OrdinalIgnoreCase) ||
-                    candidate.Name.Equals("imageFile", StringComparison.OrdinalIgnoreCase) ||
-                    candidate.Name.Equals("file", StringComparison.OrdinalIgnoreCase) ||
-                    candidate.Name.Equals("productImage", StringComparison.OrdinalIgnoreCase) ||
-                    candidate.Name.Equals("productImageFile", StringComparison.OrdinalIgnoreCase));
+            var resolvedFile = image is { Length: > 0 }
+                ? image
+                : files?.FirstOrDefault(candidate =>
+                    candidate.Length > 0 &&
+                    (
+                        candidate.Name.Equals("image", StringComparison.OrdinalIgnoreCase) ||
+                        candidate.Name.Equals("imageFile", StringComparison.OrdinalIgnoreCase) ||
+                        candidate.Name.Equals("file", StringComparison.OrdinalIgnoreCase) ||
+                        candidate.Name.Equals("productImage", StringComparison.OrdinalIgnoreCase) ||
+                        candidate.Name.Equals("productImageFile", StringComparison.OrdinalIgnoreCase)
+                    ));
 
             _logger.LogInformation(
                 "ResolveImageUrlAsync: ReceivedFileIsNull={ReceivedFileIsNull}, FileName={FileName}, FileLength={FileLength}",
@@ -512,11 +511,6 @@ namespace Maranny.API.Controllers
                 "ResolveImageUrlAsync: No file upload received. Falling back to ImageUrl='{ImageUrl}'",
                 imageUrl ?? string.Empty);
             return string.IsNullOrWhiteSpace(imageUrl) ? null : imageUrl.Trim();
-        }
-
-        private static IFormFile? FirstNonEmptyFile(params IFormFile?[] files)
-        {
-            return files.FirstOrDefault(candidate => candidate is { Length: > 0 });
         }
 
         private async Task<string> SaveProductImageAsync(IFormFile image)
