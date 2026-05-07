@@ -18,7 +18,6 @@ namespace Maranny.Application.DTOs.Products
         public string? Condition { get; set; }
 
         public int? CategoryID { get; set; }
-        public int? CategoryId { get; set; }
         public string? Category { get; set; }
         public string? CategoryName { get; set; }
         public List<int>? SportIDs { get; set; }
@@ -39,7 +38,7 @@ namespace Maranny.Application.DTOs.Products
 
 
         public string? GetResolvedProductName() => ProductName ?? Title ?? Name;
-        public int? GetResolvedCategoryId() => CategoryID ?? CategoryId;
+        public int? GetResolvedCategoryId() => CategoryID;
         public string? GetResolvedCategoryName() => Category ?? CategoryName;
         public string? GetResolvedSellerName() => SellerName ?? StoreName;
         public string? GetResolvedSellerPhone() => SellerPhone ?? PhoneNumber ?? ContactPhone;
