@@ -6,7 +6,6 @@ namespace Maranny.Application.DTOs.Products
     {
         public string? ProductName { get; set; }
         public string? Title { get; set; }
-        public string? Name { get; set; }
 
         [MaxLength(2000, ErrorMessage = "Description cannot exceed 2000 characters")]
         public string? Description { get; set; }
@@ -37,7 +36,7 @@ namespace Maranny.Application.DTOs.Products
         public string? PhotoUrl { get; set; }
 
 
-        public string? GetResolvedProductName() => ProductName ?? Title ?? Name;
+        public string? GetResolvedProductName() => ProductName ?? Title;
         public int? GetResolvedCategoryId() => CategoryID;
         public string? GetResolvedCategoryName() => Category ?? CategoryName;
         public string? GetResolvedSellerName() => SellerName ?? StoreName;
