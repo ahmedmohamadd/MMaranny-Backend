@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace Maranny.API.Controllers
 {
@@ -88,7 +89,7 @@ namespace Maranny.API.Controllers
 
         [HttpPost]
         [Authorize(Roles = "Client,Coach")]
-        [Consumes("multipart/form-data")]
+        [Consumes("multipart/form-data", "application/json")]
         [RequestSizeLimit(20_000_000)]
         public async Task<IActionResult> CreateProduct([FromForm] CreateProductDto dto, [FromForm] IFormFile? image = null)
         {
@@ -96,6 +97,11 @@ namespace Maranny.API.Controllers
             if (userId == null)
             {
                 return Unauthorized();
+            }
+
+            if (!Request.HasFormContentType)
+            {
+                dto = await TryReadJsonCreateProductDtoAsync() ?? dto;
             }
 
             var productName = dto.GetResolvedProductName()?.Trim();
@@ -472,6 +478,43 @@ namespace Maranny.API.Controllers
 
             await _dbContext.SaveChangesAsync();
             return client;
+        }
+
+
+        private async Task<CreateProductDto?> TryReadJsonCreateProductDtoAsync()
+        {
+            try
+            {
+                Request.EnableBuffering();
+                Request.Body.Position = 0;
+                using var reader = new StreamReader(Request.Body, leaveOpen: true);
+                var body = await reader.ReadToEndAsync();
+                Request.Body.Position = 0;
+
+                if (string.IsNullOrWhiteSpace(body))
+                {
+                    return null;
+                }
+
+                var dto = JsonSerializer.Deserialize<CreateProductDto>(
+                    body,
+                    new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+
+                _logger.LogInformation(
+                    "CreateProduct JSON fallback parsed request body successfully. HasProductName={HasProductName}, HasCategoryId={HasCategoryId}",
+                    !string.IsNullOrWhiteSpace(dto?.GetResolvedProductName()),
+                    dto?.GetResolvedCategoryId().HasValue == true);
+
+                return dto;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "CreateProduct JSON fallback failed to parse request body.");
+                return null;
+            }
         }
 
         private async Task<string?> ResolveImageUrlAsync(
