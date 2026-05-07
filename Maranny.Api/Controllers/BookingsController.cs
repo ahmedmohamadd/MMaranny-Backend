@@ -240,6 +240,7 @@ namespace Maranny.API.Controllers
                     Coach = new
                     {
                         b.TrainingSession.Coach.CoachID,
+                        UserID = b.TrainingSession.Coach.UserId,
                         Name = b.TrainingSession.Coach.F_name + " " + b.TrainingSession.Coach.L_name,
                         b.TrainingSession.Coach.AvgRating
                     },
@@ -357,6 +358,7 @@ namespace Maranny.API.Controllers
                 coach = new
                 {
                     booking.TrainingSession.Coach.CoachID,
+                    userId = booking.TrainingSession.Coach.UserId,
                     name = booking.TrainingSession.Coach.F_name + " " + booking.TrainingSession.Coach.L_name,
                     booking.TrainingSession.Coach.AvgRating,
                     verificationStatus = booking.TrainingSession.Coach.VerificationStatus.ToString()
