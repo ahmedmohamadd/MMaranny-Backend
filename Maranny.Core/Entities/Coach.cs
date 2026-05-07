@@ -17,7 +17,6 @@ namespace Maranny.Core.Entities
         [Required]
         public int UserId { get; set; }
 
-        [MaxLength(200)]
         public string? AvailabilityStatus { get; set; }
 
         [MaxLength(1000)]

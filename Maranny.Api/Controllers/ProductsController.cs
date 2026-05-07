@@ -1,5 +1,6 @@
-﻿using Maranny.Application.DTOs.Products;
+using Maranny.Application.DTOs.Products;
 using Maranny.Core.Entities;
+using Maranny.Core.Enums;
 using Maranny.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -13,80 +14,179 @@ namespace Maranny.API.Controllers
     public class ProductsController : ControllerBase
     {
         private readonly ApplicationDbContext _dbContext;
+        private readonly IWebHostEnvironment _environment;
+        private readonly ILogger<ProductsController> _logger;
 
-        public ProductsController(ApplicationDbContext dbContext)
+        public ProductsController(
+            ApplicationDbContext dbContext,
+            IWebHostEnvironment environment,
+            ILogger<ProductsController> logger)
         {
             _dbContext = dbContext;
+            _environment = environment;
+            _logger = logger;
         }
 
-        // Create product (Client or Coach)
-        [HttpPost]
-[Authorize(Roles = "Client")]
-public async Task<IActionResult> CreateProduct(CreateProductDto dto)
+        [HttpGet("categories")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetCategories()
         {
-            // Get current user
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdClaim, out int userId))
+            var categories = await _dbContext.Categories
+                .OrderBy(c => c.CategoryName)
+                .Select(c => new
+                {
+                    c.CategoryID,
+                    id = c.CategoryID,
+                    c.CategoryName,
+                    name = c.CategoryName,
+                    c.Description,
+                    productCount = c.Products.Count
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                totalCount = categories.Count,
+                categories
+            });
+        }
+
+        [HttpGet("search")]
+        [AllowAnonymous]
+        public Task<IActionResult> SearchProducts(
+            [FromQuery] string? query = null,
+            [FromQuery] string? category = null,
+            [FromQuery] int? categoryId = null,
+            [FromQuery] int? sportId = null,
+            [FromQuery] decimal? maxPrice = null,
+            [FromQuery] string? condition = null,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            return GetProducts(categoryId, sportId, maxPrice, condition, query, category, page, pageSize);
+        }
+
+        [HttpPost("upload-image")]
+        [Authorize(Roles = "Client,Coach")]
+        [RequestSizeLimit(20_000_000)]
+        public async Task<IActionResult> UploadProductImage([FromForm] IFormFile image)
+        {
+            if (image == null || image.Length == 0)
+            {
+                return BadRequest(new { error = "Image file is required" });
+            }
+
+            var imageUrl = await SaveProductImageAsync(image);
+
+            return Ok(new
+            {
+                message = "Image uploaded successfully",
+                imageUrl
+            });
+        }
+
+        [HttpPost]
+        [Authorize(Roles = "Client,Coach")]
+        [RequestSizeLimit(20_000_000)]
+        public async Task<IActionResult> CreateProduct([FromForm] CreateProductDto dto)
+        {
+            var userId = GetCurrentUserId();
+            if (userId == null)
             {
                 return Unauthorized();
             }
 
-            // Get client ID (only clients can sell products based on ERD)
-            var client = await _dbContext.Clients.FirstOrDefaultAsync(c => c.UserId == userId);
-            if (client == null)
+            var productName = dto.GetResolvedProductName()?.Trim();
+            if (string.IsNullOrWhiteSpace(productName) || productName.Length < 3)
             {
-                return BadRequest(new { error = "Only clients can create product listings" });
+                return BadRequest(new { error = "Product title is required and must be at least 3 characters" });
             }
 
-            // Verify category exists
-            var category = await _dbContext.Categories.FindAsync(dto.CategoryID);
+            if (string.IsNullOrWhiteSpace(dto.Description) || dto.Description.Trim().Length < 10)
+            {
+                return BadRequest(new { error = "Description is required and must be at least 10 characters" });
+            }
+
+            if (!dto.Price.HasValue || dto.Price.Value <= 0)
+            {
+                return BadRequest(new { error = "Price is required and must be greater than zero" });
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.Condition))
+            {
+                return BadRequest(new { error = "Condition is required" });
+            }
+
+            var user = await _dbContext.Users
+                .Include(u => u.Client)
+                .Include(u => u.Coach)
+                    .ThenInclude(c => c.CoachLocations)
+                .FirstOrDefaultAsync(u => u.Id == userId.Value);
+
+            if (user == null)
+            {
+                return Unauthorized();
+            }
+
+            var category = await ResolveCategoryAsync(dto.GetResolvedCategoryId(), dto.GetResolvedCategoryName());
             if (category == null)
             {
-                return NotFound(new { error = "Category not found" });
+                return BadRequest(new { error = "Valid product category is required" });
             }
 
-            // Create product
+            var client = await EnsureSellerClientProfileAsync(user, dto);
+            var imageUrl = await ResolveImageUrlAsync(dto, Request.HasFormContentType ? Request.Form.Files : null);
+
             var product = new Product
             {
                 ClientID = client.ClientID,
-                ProductName = dto.ProductName,
-                Description = dto.Description,
-                Price = dto.Price,
-                Condition = dto.Condition,
-                CategoryID = dto.CategoryID,
-                ID = dto.ImageUrl
+                ProductName = productName,
+                Description = dto.Description?.Trim(),
+                Price = dto.Price.Value,
+                Condition = dto.Condition?.Trim(),
+                CategoryID = category.CategoryID,
+                ID = imageUrl,
+                CreatedAt = DateTime.UtcNow
             };
 
             _dbContext.Products.Add(product);
             await _dbContext.SaveChangesAsync();
 
-            // Add sport relationships if provided
             if (dto.SportIDs != null && dto.SportIDs.Any())
             {
-                foreach (var sportId in dto.SportIDs)
+                var validSportIds = await _dbContext.Sports
+                    .Where(s => dto.SportIDs.Contains(s.Id))
+                    .Select(s => s.Id)
+                    .ToListAsync();
+
+                foreach (var sportId in validSportIds.Distinct())
                 {
-                    var sport = await _dbContext.Sports.FindAsync(sportId);
-                    if (sport != null)
+                    _dbContext.SportProducts.Add(new SportProduct
                     {
-                        var sportProduct = new SportProduct
-                        {
-                            SportID = sportId,
-                            ProductID = product.ProductID
-                        };
-                        _dbContext.SportProducts.Add(sportProduct);
-                    }
+                        SportID = sportId,
+                        ProductID = product.ProductID
+                    });
                 }
+
                 await _dbContext.SaveChangesAsync();
             }
+
+                        var createdProduct = await LoadProductAsync(product.ProductID);
+            if (createdProduct == null)
+            {
+                return StatusCode(500, new { error = "Product was created but could not be loaded afterwards" });
+            }
+
+            var sellerProfiles = await LoadSellerProfilesAsync(new[] { createdProduct });
 
             return Ok(new
             {
                 message = "Product created successfully",
-                productId = product.ProductID
+                productId = product.ProductID,
+                product = BuildProductPayload(createdProduct, sellerProfiles)
             });
         }
 
-        // Browse products with filters
         [HttpGet]
         [AllowAnonymous]
         public async Task<IActionResult> GetProducts(
@@ -95,106 +195,113 @@ public async Task<IActionResult> CreateProduct(CreateProductDto dto)
             [FromQuery] decimal? maxPrice = null,
             [FromQuery] string? condition = null,
             [FromQuery] string? search = null,
+            [FromQuery] string? category = null,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
+            page = Math.Max(page, 1);
+            pageSize = Math.Clamp(pageSize, 1, 100);
+
             var query = _dbContext.Products
-                .Include(p => p.Client)
-                .Include(p => p.Category)
-                .Include(p => p.SportProducts)
-                    .ThenInclude(sp => sp.Sport)
-                .AsQueryable();
-
-            // Filter by category
-            if (categoryId.HasValue)
-            {
-                query = query.Where(p => p.CategoryID == categoryId.Value);
-            }
-
-            // Filter by sport
-            if (sportId.HasValue)
-            {
-                query = query.Where(p => p.SportProducts.Any(sp => sp.SportID == sportId.Value));
-            }
-
-            // Filter by max price
-            if (maxPrice.HasValue)
-            {
-                query = query.Where(p => p.Price <= maxPrice.Value);
-            }
-
-            // Filter by condition
-            if (!string.IsNullOrWhiteSpace(condition))
-            {
-                query = query.Where(p => p.Condition!.ToLower() == condition.ToLower());
-            }
-
-            // Search by name or description
-            if (!string.IsNullOrWhiteSpace(search))
-            {
-                var searchLower = search.ToLower();
-                query = query.Where(p =>
-                    p.ProductName.ToLower().Contains(searchLower) ||
-                    p.Description!.ToLower().Contains(searchLower));
-            }
-
-            // Order by newest first
-            query = query.OrderByDescending(p => p.ProductID);
-
-            // Get total count
-            var totalCount = await query.CountAsync();
-
-            // Apply pagination
-            var products = await query
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(p => new
-                {
-                    p.ProductID,
-                    p.ProductName,
-                    p.Description,
-                    p.Price,
-                    p.Condition,
-                    ImageUrl = p.ID,
-                    Category = new
-                    {
-                        p.Category.CategoryID,
-                        p.Category.CategoryName
-                    },
-                    Seller = new
-                    {
-                        p.Client.ClientID,
-                        Name = p.Client.F_name + " " + p.Client.L_name
-                    },
-                    Sports = p.SportProducts.Select(sp => new
-                    {
-                        id = sp.SportID,
-                        sp.Sport.Name
-                    }).ToList()
-                })
-                .ToListAsync();
-
-            return Ok(new
-            {
-                totalCount = totalCount,
-                page = page,
-                pageSize = pageSize,
-                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
-                products = products
-            });
-        }
-
-        // Get product details
-        [HttpGet("{productId}")]
-        [AllowAnonymous]
-        public async Task<IActionResult> GetProductDetails(int productId)
-        {
-            var product = await _dbContext.Products
                 .Include(p => p.Client)
                     .ThenInclude(c => c.User)
                 .Include(p => p.Category)
                 .Include(p => p.SportProducts)
                     .ThenInclude(sp => sp.Sport)
+                .AsQueryable();
+
+            if (categoryId.HasValue)
+            {
+                query = query.Where(p => p.CategoryID == categoryId.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(category))
+            {
+                var normalizedCategory = category.Trim().ToLower();
+                if (normalizedCategory != "all")
+                {
+                    query = query.Where(p => p.Category.CategoryName.ToLower().Contains(normalizedCategory));
+                }
+            }
+
+            if (sportId.HasValue)
+            {
+                query = query.Where(p => p.SportProducts.Any(sp => sp.SportID == sportId.Value));
+            }
+
+            if (maxPrice.HasValue)
+            {
+                query = query.Where(p => p.Price <= maxPrice.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(condition))
+            {
+                var normalizedCondition = condition.Trim().ToLower();
+                query = query.Where(p => p.Condition != null && p.Condition.ToLower() == normalizedCondition);
+            }
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var searchLower = search.Trim().ToLower();
+                query = query.Where(p =>
+                    p.ProductName.ToLower().Contains(searchLower) ||
+                    (p.Description != null && p.Description.ToLower().Contains(searchLower)) ||
+                    p.Category.CategoryName.ToLower().Contains(searchLower) ||
+                    ((p.Client.F_name + " " + p.Client.L_name).ToLower().Contains(searchLower)) ||
+                    (p.Client.City != null && p.Client.City.ToLower().Contains(searchLower)) ||
+                    (p.Client.Street_name != null && p.Client.Street_name.ToLower().Contains(searchLower)) ||
+                    (p.Client.User.PhoneNumber != null && p.Client.User.PhoneNumber.ToLower().Contains(searchLower)));
+            }
+
+            query = query.OrderByDescending(p => p.CreatedAt).ThenByDescending(p => p.ProductID);
+
+            var totalCount = await query.CountAsync();
+
+            var products = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            var sellerProfiles = await LoadSellerProfilesAsync(products);
+
+            return Ok(new
+            {
+                totalCount,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                products = products.Select(p => BuildProductPayload(p, sellerProfiles)).ToList()
+            });
+        }
+
+        [HttpGet("{productId:int}")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetProductDetails(int productId)
+        {
+            var product = await LoadProductAsync(productId);
+            if (product == null)
+            {
+                return NotFound(new { error = "Product not found" });
+            }
+
+            var sellerProfiles = await LoadSellerProfilesAsync(new[] { product });
+
+            return Ok(BuildProductPayload(product, sellerProfiles));
+        }
+
+        [HttpPut("{productId:int}")]
+        [Authorize(Roles = "Client,Coach")]
+        [RequestSizeLimit(20_000_000)]
+        public async Task<IActionResult> UpdateProduct(int productId, [FromForm] UpdateProductDto dto)
+        {
+            var userId = GetCurrentUserId();
+            if (userId == null)
+            {
+                return Unauthorized();
+            }
+
+            var product = await _dbContext.Products
+                .Include(p => p.Client)
                 .FirstOrDefaultAsync(p => p.ProductID == productId);
 
             if (product == null)
@@ -202,135 +309,315 @@ public async Task<IActionResult> CreateProduct(CreateProductDto dto)
                 return NotFound(new { error = "Product not found" });
             }
 
-            var result = new
-            {
-                product.ProductID,
-                product.ProductName,
-                product.Description,
-                product.Price,
-                product.Condition,
-                ImageUrl = product.ID,
-                Category = new
-                {
-                    product.Category.CategoryID,
-                    product.Category.CategoryName
-                },
-                Seller = new
-                {
-                    product.Client.ClientID,
-                    Name = product.Client.F_name + " " + product.Client.L_name,
-                    Email = product.Client.User.Email,
-                    Phone = product.Client.User.PhoneNumber
-                },
-                Sports = product.SportProducts.Select(sp => new
-                {
-                    id = sp.SportID,
-                    sp.Sport.Name
-                }).ToList()
-            };
-
-            return Ok(result);
-        }
-
-        // Update product
-        [HttpPut("{productId}")]
-        [Authorize(Roles = "Client")]
-        public async Task<IActionResult> UpdateProduct(int productId, UpdateProductDto dto)
-        {
-            // Get current user
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdClaim, out int userId))
-            {
-                return Unauthorized();
-            }
-
-            // Get client ID
-            var client = await _dbContext.Clients.FirstOrDefaultAsync(c => c.UserId == userId);
-            if (client == null)
-            {
-                return NotFound(new { error = "Client profile not found" });
-            }
-
-            // Get product
-            var product = await _dbContext.Products.FindAsync(productId);
-            if (product == null)
-            {
-                return NotFound(new { error = "Product not found" });
-            }
-
-            // Verify ownership
-            if (product.ClientID != client.ClientID)
+            if (product.Client.UserId != userId.Value && !User.IsInRole("Admin"))
             {
                 return Forbid();
             }
 
-            // Update fields (only if provided)
             if (!string.IsNullOrWhiteSpace(dto.ProductName))
-                product.ProductName = dto.ProductName;
+                product.ProductName = dto.ProductName.Trim();
 
             if (!string.IsNullOrWhiteSpace(dto.Description))
-                product.Description = dto.Description;
+                product.Description = dto.Description.Trim();
 
             if (dto.Price.HasValue)
                 product.Price = dto.Price.Value;
 
             if (!string.IsNullOrWhiteSpace(dto.Condition))
-                product.Condition = dto.Condition;
+                product.Condition = dto.Condition.Trim();
 
             if (dto.CategoryID.HasValue)
             {
                 var category = await _dbContext.Categories.FindAsync(dto.CategoryID.Value);
-                if (category != null)
-                    product.CategoryID = dto.CategoryID.Value;
+                if (category == null)
+                {
+                    return BadRequest(new { error = "Category not found" });
+                }
+
+                product.CategoryID = dto.CategoryID.Value;
             }
 
             if (!string.IsNullOrWhiteSpace(dto.ImageUrl))
-                product.ID = dto.ImageUrl;
+                product.ID = dto.ImageUrl.Trim();
 
             await _dbContext.SaveChangesAsync();
 
             return Ok(new { message = "Product updated successfully" });
         }
 
-        // Delete product
-        [HttpDelete("{productId}")]
-        [Authorize(Roles = "Client,Admin")]
+        [HttpDelete("{productId:int}")]
+        [Authorize(Roles = "Client,Coach,Admin")]
         public async Task<IActionResult> DeleteProduct(int productId)
         {
-            // Get current user
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdClaim, out int userId))
+            var userId = GetCurrentUserId();
+            if (userId == null)
             {
                 return Unauthorized();
             }
 
-            var product = await _dbContext.Products.FindAsync(productId);
+            var product = await _dbContext.Products
+                .Include(p => p.Client)
+                .FirstOrDefaultAsync(p => p.ProductID == productId);
+
             if (product == null)
             {
                 return NotFound(new { error = "Product not found" });
             }
 
-            // Check ownership (unless admin)
-            if (User.IsInRole("Client"))
+            if (!User.IsInRole("Admin") && product.Client.UserId != userId.Value)
             {
-                var client = await _dbContext.Clients.FirstOrDefaultAsync(c => c.UserId == userId);
-                if (client == null || product.ClientID != client.ClientID)
-                {
-                    return Forbid();
-                }
+                return Forbid();
             }
 
-            // Delete related SportProducts first
             var sportProducts = await _dbContext.SportProducts
                 .Where(sp => sp.ProductID == productId)
                 .ToListAsync();
-            _dbContext.SportProducts.RemoveRange(sportProducts);
 
-            // Now delete the product
+            _dbContext.SportProducts.RemoveRange(sportProducts);
             _dbContext.Products.Remove(product);
             await _dbContext.SaveChangesAsync();
 
             return Ok(new { message = "Product deleted successfully" });
+        }
+
+        private int? GetCurrentUserId()
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            return int.TryParse(userIdClaim, out var userId) ? userId : null;
+        }
+
+        private async Task<Category?> ResolveCategoryAsync(int? categoryId, string? categoryName)
+        {
+            if (categoryId.HasValue)
+            {
+                return await _dbContext.Categories.FirstOrDefaultAsync(c => c.CategoryID == categoryId.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(categoryName))
+            {
+                var normalizedName = categoryName.Trim().ToLower();
+                return await _dbContext.Categories
+                    .FirstOrDefaultAsync(c => c.CategoryName.ToLower() == normalizedName);
+            }
+
+            return null;
+        }
+
+        private async Task<Client> EnsureSellerClientProfileAsync(ApplicationUser user, CreateProductDto dto)
+        {
+            var client = await _dbContext.Clients.FirstOrDefaultAsync(c => c.UserId == user.Id);
+
+            var sellerName = dto.GetResolvedSellerName();
+            var location = dto.GetResolvedLocation();
+            var phone = dto.GetResolvedSellerPhone();
+
+            if (client == null)
+            {
+                var firstName = user.Client?.F_name ?? user.Coach?.F_name ?? user.UserName ?? "Marketplace";
+                var lastName = user.Client?.L_name ?? user.Coach?.L_name ?? "Seller";
+
+                if (!string.IsNullOrWhiteSpace(sellerName))
+                {
+                    var nameParts = sellerName.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    firstName = nameParts.FirstOrDefault() ?? firstName;
+                    lastName = nameParts.Length > 1 ? string.Join(' ', nameParts.Skip(1)) : lastName;
+                }
+
+                client = new Client
+                {
+                    UserId = user.Id,
+                    F_name = firstName,
+                    L_name = lastName,
+                    Email = user.Email ?? $"{user.Id}@maranny.local",
+                    Password = "ManagedByIdentity",
+                    City = location,
+                    Street_name = location
+                };
+
+                _dbContext.Clients.Add(client);
+                await _dbContext.SaveChangesAsync();
+            }
+            else if (!string.IsNullOrWhiteSpace(sellerName))
+            {
+                var nameParts = sellerName.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                client.F_name = nameParts.FirstOrDefault() ?? client.F_name;
+                client.L_name = nameParts.Length > 1 ? string.Join(' ', nameParts.Skip(1)) : client.L_name;
+            }
+
+            if (!string.IsNullOrWhiteSpace(location))
+            {
+                client.City = location.Trim();
+                client.Street_name ??= location.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(phone))
+            {
+                user.PhoneNumber = phone.Trim();
+            }
+
+            await _dbContext.SaveChangesAsync();
+            return client;
+        }
+
+        private async Task<string?> ResolveImageUrlAsync(CreateProductDto dto, IFormFileCollection? files)
+        {
+            var imageFile = files?.FirstOrDefault(file =>
+                file.Name.Equals("image", StringComparison.OrdinalIgnoreCase) ||
+                file.Name.Equals("imageFile", StringComparison.OrdinalIgnoreCase));
+
+            if (imageFile != null && imageFile.Length > 0)
+            {
+                return await SaveProductImageAsync(imageFile);
+            }
+
+            var imageUrl = dto.GetResolvedImageUrl();
+            return string.IsNullOrWhiteSpace(imageUrl) ? null : imageUrl.Trim();
+        }
+
+        private async Task<string> SaveProductImageAsync(IFormFile image)
+        {
+            var uploadsRoot = Path.Combine(_environment.WebRootPath ?? Path.Combine(_environment.ContentRootPath, "wwwroot"), "uploads", "products");
+            Directory.CreateDirectory(uploadsRoot);
+
+            var extension = Path.GetExtension(image.FileName);
+            var safeExtension = string.IsNullOrWhiteSpace(extension) ? ".jpg" : extension;
+            var fileName = $"{Guid.NewGuid():N}{safeExtension}";
+            var fullPath = Path.Combine(uploadsRoot, fileName);
+
+            await using var stream = System.IO.File.Create(fullPath);
+            await image.CopyToAsync(stream);
+
+            var relativeUrl = $"/uploads/products/{fileName}";
+            _logger.LogInformation("Saved marketplace image to {ImageUrl}", relativeUrl);
+            return relativeUrl;
+        }
+
+        private async Task<Product?> LoadProductAsync(int productId)
+        {
+            return await _dbContext.Products
+                .Include(p => p.Client)
+                    .ThenInclude(c => c.User)
+                .Include(p => p.Category)
+                .Include(p => p.SportProducts)
+                    .ThenInclude(sp => sp.Sport)
+                .FirstOrDefaultAsync(p => p.ProductID == productId);
+        }
+
+        private async Task<Dictionary<int, SellerProfile>> LoadSellerProfilesAsync(IEnumerable<Product> products)
+        {
+            var userIds = products
+                .Select(p => p.Client.UserId)
+                .Distinct()
+                .ToList();
+
+            var coaches = await _dbContext.Coaches
+                .Include(c => c.CoachLocations)
+                .Where(c => userIds.Contains(c.UserId))
+                .Select(c => new
+                {
+                    c.UserId,
+                    c.CoachID,
+                    FullName = (c.F_name + " " + c.L_name).Trim(),
+                    c.AvgRating,
+                    reviewsCount = c.Reviews.Count,
+                    Location = c.CoachLocations.Select(cl => cl.WorkingLocation).FirstOrDefault(),
+                    Role = "Coach"
+                })
+                .ToListAsync();
+
+            return coaches.ToDictionary(
+                c => c.UserId,
+                c => new SellerProfile
+                {
+                    CoachId = c.CoachID,
+                    Role = c.Role,
+                    Name = c.FullName,
+                    Rating = c.AvgRating,
+                    ReviewsCount = c.reviewsCount,
+                    Location = c.Location
+                });
+        }
+
+        private object BuildProductPayload(Product product, Dictionary<int, SellerProfile> sellerProfiles)
+        {
+            sellerProfiles.TryGetValue(product.Client.UserId, out var sellerProfile);
+
+            var sellerName = !string.IsNullOrWhiteSpace(sellerProfile?.Name)
+                ? sellerProfile!.Name
+                : $"{product.Client.F_name} {product.Client.L_name}".Trim();
+
+            var sellerLocation = sellerProfile?.Location
+                ?? product.Client.City
+                ?? product.Client.Street_name;
+
+            var phone = product.Client.User.PhoneNumber;
+
+            return new
+            {
+                product.ProductID,
+                id = product.ProductID,
+                productId = product.ProductID,
+                product.ProductName,
+                title = product.ProductName,
+                name = product.ProductName,
+                productName = product.ProductName,
+                product.Description,
+                description = product.Description,
+                product.Price,
+                price = product.Price,
+                product.Condition,
+                condition = product.Condition,
+                imageUrl = product.ID,
+                image = product.ID,
+                photoUrl = product.ID,
+                createdAt = product.CreatedAt,
+                categoryId = product.CategoryID,
+                ownerId = product.Client.UserId,
+                sellerId = product.Client.UserId,
+                category = product.Category.CategoryName,
+                categoryName = product.Category.CategoryName,
+                sellerName,
+                storeName = sellerName,
+                sellerPhone = phone,
+                phoneNumber = phone,
+                contactPhone = phone,
+                sellerLocation,
+                location = sellerLocation,
+                city = sellerLocation,
+                rating = sellerProfile?.Rating,
+                reviewsCount = sellerProfile?.ReviewsCount ?? 0,
+                sellerRating = sellerProfile?.Rating,
+                sellerRole = sellerProfile?.Role ?? "Client",
+                sellerCoachId = sellerProfile?.CoachId,
+                seller = new
+                {
+                    id = product.Client.UserId,
+                    clientId = product.Client.ClientID,
+                    coachId = sellerProfile?.CoachId,
+                    name = sellerName,
+                    email = product.Client.User.Email,
+                    phone = phone,
+                    location = sellerLocation,
+                    rating = sellerProfile?.Rating,
+                    reviewsCount = sellerProfile?.ReviewsCount ?? 0,
+                    role = sellerProfile?.Role ?? "Client"
+                },
+                sports = product.SportProducts.Select(sp => new
+                {
+                    id = sp.SportID,
+                    name = sp.Sport.Name
+                }).ToList()
+            };
+        }
+
+        private sealed class SellerProfile
+        {
+            public int? CoachId { get; set; }
+            public string Role { get; set; } = "Client";
+            public string? Name { get; set; }
+            public decimal? Rating { get; set; }
+            public int ReviewsCount { get; set; }
+            public string? Location { get; set; }
         }
     }
 }

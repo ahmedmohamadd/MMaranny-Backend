@@ -6,6 +6,7 @@ using Maranny.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Security.Claims;
 using System.Text.Json;
@@ -20,15 +21,18 @@ namespace Maranny.API.Controllers
         private readonly ApplicationDbContext _dbContext;
         private readonly INotificationService _notificationService;
         private readonly IPaymentService _paymentService;
+        private readonly ILogger<BookingsController> _logger;
 
         public BookingsController(
             ApplicationDbContext dbContext,
             INotificationService notificationService,
-            IPaymentService paymentService)
+            IPaymentService paymentService,
+            ILogger<BookingsController> logger)
         {
             _dbContext = dbContext;
             _notificationService = notificationService;
             _paymentService = paymentService;
+            _logger = logger;
         }
 
         [HttpPost]
@@ -136,7 +140,7 @@ namespace Maranny.API.Controllers
 
             await _dbContext.SaveChangesAsync();
 
-            await _notificationService.SendNotificationAsync(
+            await TrySendNotificationAsync(
                 session.Coach.UserId,
                 "New Booking",
                 $"You have a new booking for {session.SessionDate:MMM dd} at {session.Start_Time}",
@@ -499,7 +503,7 @@ namespace Maranny.API.Controllers
 
             if (clientUserId != 0)
             {
-                await _notificationService.SendNotificationAsync(
+                await TrySendNotificationAsync(
                     clientUserId,
                     "Booking Confirmed",
                     $"Your booking for {booking.TrainingSession.SessionDate:MMM dd} has been approved by the coach.",
@@ -560,7 +564,7 @@ namespace Maranny.API.Controllers
 
             if (clientUserId != 0)
             {
-                await _notificationService.SendNotificationAsync(
+                await TrySendNotificationAsync(
                     clientUserId,
                     "Booking Declined",
                     $"Your booking for {booking.TrainingSession.SessionDate:MMM dd} was declined by the coach.",
@@ -670,7 +674,7 @@ namespace Maranny.API.Controllers
 
             if (coachUserId != 0)
             {
-                await _notificationService.SendNotificationAsync(
+                await TrySendNotificationAsync(
                     coachUserId,
                     "Booking Cancelled",
                     $"A booking for {booking.TrainingSession.SessionDate:MMM dd} has been cancelled by the client",
@@ -775,7 +779,7 @@ namespace Maranny.API.Controllers
                         ? $"Your session on {session.SessionDate:MMM dd} has been cancelled. Full refund of {payment.Amount:F2} EGP will be processed."
                         : $"Your session on {session.SessionDate:MMM dd} has been cancelled by the coach.";
 
-                    await _notificationService.SendNotificationAsync(
+                    await TrySendNotificationAsync(
                         clientUserId,
                         "Session Cancelled by Coach",
                         cancellationMessage,
@@ -809,20 +813,20 @@ namespace Maranny.API.Controllers
                     : new ResolvedSessionResult { Session = existingSession, AutoCreatedSession = false };
             }
 
-            if (!dto.CoachID.HasValue || !dto.SportID.HasValue || !dto.SessionDate.HasValue || string.IsNullOrWhiteSpace(dto.StartTime))
+            if (!dto.CoachID.HasValue || !dto.SessionDate.HasValue || string.IsNullOrWhiteSpace(dto.StartTime))
             {
                 return new ResolvedSessionResult
                 {
                     ErrorResult = BadRequest(new
                     {
-                        error = "Provide either SessionID or CoachID, SportID, SessionDate and StartTime to create a booking"
+                        error = "Provide either SessionID or CoachID, SessionDate and StartTime to create a booking"
                     })
                 };
             }
 
             var coach = await _dbContext.Coaches
                 .Include(c => c.CoachLocations)
-                .FirstOrDefaultAsync(c => c.CoachID == dto.CoachID.Value);
+                .FirstOrDefaultAsync(c => c.CoachID == dto.CoachID.Value || c.UserId == dto.CoachID.Value);
 
             if (coach == null)
             {
@@ -834,8 +838,27 @@ namespace Maranny.API.Controllers
                 return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Coach must be verified before accepting bookings" }) };
             }
 
+            var requestedSportId = dto.SportID;
+            if (!requestedSportId.HasValue)
+            {
+                var coachSportIds = await _dbContext.CoachSports
+                    .Where(cs => cs.CoachID == coach.CoachID)
+                    .Select(cs => cs.SportID)
+                    .Distinct()
+                    .ToListAsync();
+
+                if (coachSportIds.Count == 1)
+                {
+                    requestedSportId = coachSportIds[0];
+                }
+                else
+                {
+                    return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "SportID is required when the coach offers more than one sport" }) };
+                }
+            }
+
             var coachCanTeachSport = await _dbContext.CoachSports
-                .AnyAsync(cs => cs.CoachID == coach.CoachID && cs.SportID == dto.SportID.Value);
+                .AnyAsync(cs => cs.CoachID == coach.CoachID && cs.SportID == requestedSportId.Value);
 
             if (!coachCanTeachSport)
             {
@@ -896,7 +919,7 @@ namespace Maranny.API.Controllers
             {
                 CoachID = coach.CoachID,
                 Coach = coach,
-                SportID = dto.SportID.Value,
+                SportID = requestedSportId.Value,
                 SessionDate = sessionDate,
                 SessionType = dto.SessionType ?? "Private Session",
                 Location = dto.Location ?? coach.CoachLocations.Select(cl => cl.WorkingLocation).FirstOrDefault(),
@@ -910,6 +933,18 @@ namespace Maranny.API.Controllers
             await _dbContext.SaveChangesAsync();
 
             return new ResolvedSessionResult { Session = newSession, AutoCreatedSession = true };
+        }
+
+        private async Task TrySendNotificationAsync(int userId, string title, string message, NotificationType type)
+        {
+            try
+            {
+                await _notificationService.SendNotificationAsync(userId, title, message, type);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Notification sending failed after booking-related state change for user {UserId}", userId);
+            }
         }
 
         private async Task<int> GetActiveBookingCountAsync(int sessionId)
