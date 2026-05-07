@@ -362,7 +362,7 @@ namespace Maranny.API.Controllers
         private static string SerializeAvailability(
             IEnumerable<string>? availableDays,
             IEnumerable<string>? availableHours,
-            IEnumerable<CoachAvailabilitySlotDto>? dayHourSlots)
+            IEnumerable<CoachSetupAvailabilitySlotDto>? dayHourSlots)
         {
             var requestedDays = (availableDays ?? Enumerable.Empty<string>())
                 .Where(d => !string.IsNullOrWhiteSpace(d))
@@ -370,7 +370,7 @@ namespace Maranny.API.Controllers
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var normalizedSlots = (dayHourSlots ?? Enumerable.Empty<CoachAvailabilitySlotDto>())
+            var normalizedSlots = (dayHourSlots ?? Enumerable.Empty<CoachSetupAvailabilitySlotDto>())
                 .Where(slot => !string.IsNullOrWhiteSpace(slot.Day))
                 .Select(slot => new DayHourSlot
                 {
@@ -425,10 +425,10 @@ namespace Maranny.API.Controllers
             });
         }
 
-        private static bool HasAnyAvailableHours(IEnumerable<string>? availableHours, IEnumerable<CoachAvailabilitySlotDto>? dayHourSlots)
+        private static bool HasAnyAvailableHours(IEnumerable<string>? availableHours, IEnumerable<CoachSetupAvailabilitySlotDto>? dayHourSlots)
         {
             return (availableHours ?? Enumerable.Empty<string>()).Any(h => !string.IsNullOrWhiteSpace(h)) ||
-                   (dayHourSlots ?? Enumerable.Empty<CoachAvailabilitySlotDto>())
+                   (dayHourSlots ?? Enumerable.Empty<CoachSetupAvailabilitySlotDto>())
                        .Any(slot => (slot.Hours ?? new List<string>()).Any(h => !string.IsNullOrWhiteSpace(h)));
         }
 
