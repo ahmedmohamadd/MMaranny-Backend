@@ -30,7 +30,7 @@ namespace Maranny.Application.DTOs.Profile
 
         public List<string> AvailableHours { get; set; } = new();
 
-        public List<CoachAvailabilitySlotDto> DayHourSlots { get; set; } = new();
+        public List<CoachSetupAvailabilitySlotDto> DayHourSlots { get; set; } = new();
 
         [MaxLength(1000)]
         public string? Bio { get; set; }
@@ -57,7 +57,7 @@ namespace Maranny.Application.DTOs.Profile
         public int? ExperienceYears { get; set; }
     }
 
-    public class CoachAvailabilitySlotDto
+    public class CoachSetupAvailabilitySlotDto
     {
         [Required]
         [MaxLength(50)]
