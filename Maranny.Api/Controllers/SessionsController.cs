@@ -313,11 +313,19 @@ namespace Maranny.API.Controllers
                 {
                     s.SessionID,
                     s.SessionDate,
+                    Status = s.Status.ToString(),
                     s.Start_Time,
                     s.End_Time,
                     s.SessionType,
                     s.Location,
                     s.MaxParticipants,
+                    PendingBookings = _dbContext.Bookings.Count(b => b.SessionID == s.SessionID && b.Status == BookingStatus.Pending),
+                    ConfirmedBookings = _dbContext.Bookings.Count(b => b.SessionID == s.SessionID && b.Status == BookingStatus.Confirmed),
+                    ReservationStatus = _dbContext.Bookings.Any(b => b.SessionID == s.SessionID && b.Status == BookingStatus.Confirmed)
+                        ? "Confirmed"
+                        : _dbContext.Bookings.Any(b => b.SessionID == s.SessionID && b.Status == BookingStatus.Pending)
+                            ? "Pending"
+                            : "Free",
                     SportName = s.Sport.Name,
                     SportID = s.SportID,
                     Price = _dbContext.CoachSports
@@ -330,6 +338,38 @@ namespace Maranny.API.Controllers
                 })
                 .ToListAsync();
 
+            var weeklySlotStatuses = sessions
+                .Select(s => new
+                {
+                    dayName = s.SessionDate.DayOfWeek.ToString(),
+                    date = s.SessionDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    hour = DateTime.Today.Add(s.Start_Time).ToString("h:mm tt", CultureInfo.InvariantCulture),
+                    reservationStatus = s.ReservationStatus,
+                    pendingBookings = s.PendingBookings,
+                    confirmedBookings = s.ConfirmedBookings,
+                    availableSlots = s.AvailableSlots,
+                    sessionId = s.SessionID
+                })
+                .GroupBy(
+                    slot => $"{slot.dayName.Trim().ToLowerInvariant()}|{slot.hour.Trim().ToUpperInvariant()}")
+                .Select(group =>
+                {
+                    var confirmed = group.FirstOrDefault(slot => string.Equals(slot.reservationStatus, "Confirmed", StringComparison.OrdinalIgnoreCase));
+                    if (confirmed != null)
+                    {
+                        return confirmed;
+                    }
+
+                    var pending = group.FirstOrDefault(slot => string.Equals(slot.reservationStatus, "Pending", StringComparison.OrdinalIgnoreCase));
+                    if (pending != null)
+                    {
+                        return pending;
+                    }
+
+                    return group.First();
+                })
+                .ToList();
+
             return Ok(new
             {
                 coachId = coach.CoachID,
@@ -337,6 +377,7 @@ namespace Maranny.API.Controllers
                 availableHours = availability.AvailableHours,
                 dayHourSlots = availability.DayHourSlots,
                 upcomingAvailableDates,
+                weeklySlotStatuses,
                 locations = coach.CoachLocations.Select(cl => cl.WorkingLocation).ToList(),
                 sports = coach.CoachSports.Select(cs => new
                 {
@@ -416,6 +457,14 @@ namespace Maranny.API.Controllers
                     s.End_Time,
                     SportName = s.Sport.Name,
                     SportID = s.SportID,
+                    Status = s.Status.ToString(),
+                    PendingBookings = _dbContext.Bookings.Count(b => b.SessionID == s.SessionID && b.Status == BookingStatus.Pending),
+                    ConfirmedBookings = _dbContext.Bookings.Count(b => b.SessionID == s.SessionID && b.Status == BookingStatus.Confirmed),
+                    ReservationStatus = _dbContext.Bookings.Any(b => b.SessionID == s.SessionID && b.Status == BookingStatus.Confirmed)
+                        ? "Confirmed"
+                        : _dbContext.Bookings.Any(b => b.SessionID == s.SessionID && b.Status == BookingStatus.Pending)
+                            ? "Pending"
+                            : "Free",
                     Price = _dbContext.CoachSports
                         .Where(cs => cs.CoachID == s.CoachID && cs.SportID == s.SportID)
                         .Select(cs => cs.PricePerSession)

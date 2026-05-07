@@ -327,6 +327,78 @@ namespace Maranny.API.Controllers
             });
         }
 
+        [HttpGet("bookings/recent")]
+        public async Task<IActionResult> GetRecentBookings(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 10,
+            [FromQuery] string? status = null)
+        {
+            page = Math.Max(page, 1);
+            pageSize = Math.Clamp(pageSize, 1, 50);
+
+            var query = _dbContext.Bookings
+                .Include(b => b.Client)
+                .Include(b => b.TrainingSession)
+                    .ThenInclude(s => s.Coach)
+                .Include(b => b.TrainingSession)
+                    .ThenInclude(s => s.Sport)
+                .Include(b => b.TrainingSession)
+                    .ThenInclude(s => s.Payment)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(status) &&
+                Enum.TryParse<BookingStatus>(status, true, out var parsedStatus))
+            {
+                query = query.Where(b => b.Status == parsedStatus);
+            }
+
+            var totalCount = await query.CountAsync();
+
+            var bookings = await query
+                .OrderByDescending(b => b.BookingDate)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(b => new
+                {
+                    bookingId = b.BookingID,
+                    bookingDate = b.BookingDate,
+                    status = b.Status.ToString(),
+                    amount = b.TrainingSession.Payment != null
+                        ? b.TrainingSession.Payment.Amount
+                        : 0,
+                    client = new
+                    {
+                        clientId = b.Client.ClientID,
+                        name = (b.Client.F_name + " " + b.Client.L_name).Trim()
+                    },
+                    coach = new
+                    {
+                        coachId = b.TrainingSession.Coach.CoachID,
+                        name = (b.TrainingSession.Coach.F_name + " " + b.TrainingSession.Coach.L_name).Trim()
+                    },
+                    session = new
+                    {
+                        sessionId = b.TrainingSession.SessionID,
+                        sessionDate = b.TrainingSession.SessionDate,
+                        startTime = b.TrainingSession.Start_Time,
+                        endTime = b.TrainingSession.End_Time,
+                        location = b.TrainingSession.Location,
+                        sportName = b.TrainingSession.Sport.Name,
+                        sessionType = b.TrainingSession.SessionType
+                    }
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                totalCount,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                bookings
+            });
+        }
+
         // Get pending certificates (coaches waiting for certificate verification)
         [HttpGet("certificates/pending")]
         public async Task<IActionResult> GetPendingCertificates()
