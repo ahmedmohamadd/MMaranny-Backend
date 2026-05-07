@@ -67,6 +67,7 @@ namespace Maranny.API.Controllers
         }
 
         [HttpPost("upload-image")]
+        [Consumes("multipart/form-data")]
         [Authorize(Roles = "Client,Coach")]
         [RequestSizeLimit(20_000_000)]
         public async Task<IActionResult> UploadProductImage([FromForm] IFormFile image)
@@ -87,8 +88,9 @@ namespace Maranny.API.Controllers
 
         [HttpPost]
         [Authorize(Roles = "Client,Coach")]
+        [Consumes("multipart/form-data", "application/json")]
         [RequestSizeLimit(20_000_000)]
-        public async Task<IActionResult> CreateProduct([FromForm] CreateProductDto dto)
+        public async Task<IActionResult> CreateProduct([FromForm] CreateProductDto dto, [FromForm] IFormFile? image = null, [FromForm] IFormFile? imageFile = null, [FromForm] IFormFile? file = null, [FromForm] IFormFile? productImage = null, [FromForm] IFormFile? productImageFile = null)
         {
             var userId = GetCurrentUserId();
             if (userId == null)
@@ -135,7 +137,12 @@ namespace Maranny.API.Controllers
             }
 
             var client = await EnsureSellerClientProfileAsync(user, dto);
-            var imageUrl = await ResolveImageUrlAsync(dto, Request.HasFormContentType ? Request.Form.Files : null);
+            _logger.LogInformation(
+                "CreateProduct incoming request: HasFormContentType={HasFormContentType}, FormFileCount={FormFileCount}, ContentType={ContentType}",
+                Request.HasFormContentType,
+                Request.HasFormContentType ? Request.Form.Files.Count : 0,
+                Request.ContentType ?? string.Empty);
+            var imageUrl = await ResolveImageUrlAsync(dto, image, imageFile, file, productImage, productImageFile, Request.HasFormContentType ? Request.Form.Files : null);
 
             var product = new Product
             {
@@ -149,8 +156,16 @@ namespace Maranny.API.Controllers
                 CreatedAt = DateTime.UtcNow
             };
 
+            _logger.LogInformation(
+                "CreateProduct before SaveChanges: ProductID={ProductID}, ProductImageUrl={ProductImageUrl}",
+                product.ProductID,
+                product.ID ?? string.Empty);
             _dbContext.Products.Add(product);
             await _dbContext.SaveChangesAsync();
+            _logger.LogInformation(
+                "CreateProduct after SaveChanges: ProductID={ProductID}, ProductImageUrl={ProductImageUrl}",
+                product.ProductID,
+                product.ID ?? string.Empty);
 
             if (dto.SportIDs != null && dto.SportIDs.Any())
             {
@@ -291,6 +306,7 @@ namespace Maranny.API.Controllers
 
         [HttpPut("{productId:int}")]
         [Authorize(Roles = "Client,Coach")]
+        [Consumes("multipart/form-data", "application/json")]
         [RequestSizeLimit(20_000_000)]
         public async Task<IActionResult> UpdateProduct(int productId, [FromForm] UpdateProductDto dto)
         {
@@ -459,19 +475,48 @@ namespace Maranny.API.Controllers
             return client;
         }
 
-        private async Task<string?> ResolveImageUrlAsync(CreateProductDto dto, IFormFileCollection? files)
+        private async Task<string?> ResolveImageUrlAsync(
+            CreateProductDto dto,
+            IFormFile? image,
+            IFormFile? imageFile,
+            IFormFile? file,
+            IFormFile? productImage,
+            IFormFile? productImageFile,
+            IFormFileCollection? files)
         {
-            var imageFile = files?.FirstOrDefault(file =>
-                file.Name.Equals("image", StringComparison.OrdinalIgnoreCase) ||
-                file.Name.Equals("imageFile", StringComparison.OrdinalIgnoreCase));
+            var resolvedFile = FirstNonEmptyFile(image, imageFile, file, productImage, productImageFile)
+                ?? files?.FirstOrDefault(candidate =>
+                    candidate.Name.Equals("image", StringComparison.OrdinalIgnoreCase) ||
+                    candidate.Name.Equals("imageFile", StringComparison.OrdinalIgnoreCase) ||
+                    candidate.Name.Equals("file", StringComparison.OrdinalIgnoreCase) ||
+                    candidate.Name.Equals("productImage", StringComparison.OrdinalIgnoreCase) ||
+                    candidate.Name.Equals("productImageFile", StringComparison.OrdinalIgnoreCase));
 
-            if (imageFile != null && imageFile.Length > 0)
+            _logger.LogInformation(
+                "ResolveImageUrlAsync: ReceivedFileIsNull={ReceivedFileIsNull}, FileName={FileName}, FileLength={FileLength}",
+                resolvedFile == null,
+                resolvedFile?.FileName ?? string.Empty,
+                resolvedFile?.Length ?? 0);
+
+            if (resolvedFile != null && resolvedFile.Length > 0)
             {
-                return await SaveProductImageAsync(imageFile);
+                var savedPath = await SaveProductImageAsync(resolvedFile);
+                _logger.LogInformation(
+                    "ResolveImageUrlAsync: SavedRelativePath={SavedRelativePath}",
+                    savedPath);
+                return savedPath;
             }
 
             var imageUrl = dto.GetResolvedImageUrl();
+            _logger.LogInformation(
+                "ResolveImageUrlAsync: No file upload received. Falling back to ImageUrl='{ImageUrl}'",
+                imageUrl ?? string.Empty);
             return string.IsNullOrWhiteSpace(imageUrl) ? null : imageUrl.Trim();
+        }
+
+        private static IFormFile? FirstNonEmptyFile(params IFormFile?[] files)
+        {
+            return files.FirstOrDefault(candidate => candidate is { Length: > 0 });
         }
 
         private async Task<string> SaveProductImageAsync(IFormFile image)

@@ -37,6 +37,7 @@ namespace Maranny.Application.DTOs.Products
         [MaxLength(500)]
         public string? PhotoUrl { get; set; }
 
+
         public string? GetResolvedProductName() => ProductName ?? Title ?? Name;
         public int? GetResolvedCategoryId() => CategoryID ?? CategoryId;
         public string? GetResolvedCategoryName() => Category ?? CategoryName;
