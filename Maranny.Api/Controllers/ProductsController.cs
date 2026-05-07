@@ -93,11 +93,13 @@ namespace Maranny.API.Controllers
         [RequestSizeLimit(20_000_000)]
         public async Task<IActionResult> CreateProduct([FromForm] CreateProductDto dto, [FromForm] IFormFile? image = null)
         {
-            var userId = GetCurrentUserId();
-            if (userId == null)
+            try
             {
-                return Unauthorized();
-            }
+                var userId = GetCurrentUserId();
+                if (userId == null)
+                {
+                    return Unauthorized();
+                }
 
             if (!Request.HasFormContentType)
             {
@@ -206,6 +208,17 @@ namespace Maranny.API.Controllers
                 productId = product.ProductID,
                 product = BuildProductPayload(createdProduct, sellerProfiles)
             });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "CreateProduct failed unexpectedly.");
+                return StatusCode(500, new
+                {
+                    error = "Failed to create product",
+                    details = ex.Message,
+                    inner = ex.InnerException?.Message
+                });
+            }
         }
 
         [HttpGet]
@@ -409,19 +422,21 @@ namespace Maranny.API.Controllers
 
         private async Task<Category?> ResolveCategoryAsync(int? categoryId, string? categoryName)
         {
+            Category? category = null;
+
             if (categoryId.HasValue)
             {
-                return await _dbContext.Categories.FirstOrDefaultAsync(c => c.CategoryID == categoryId.Value);
+                category = await _dbContext.Categories.FirstOrDefaultAsync(c => c.CategoryID == categoryId.Value);
             }
 
-            if (!string.IsNullOrWhiteSpace(categoryName))
+            if (category == null && !string.IsNullOrWhiteSpace(categoryName))
             {
                 var normalizedName = categoryName.Trim().ToLower();
-                return await _dbContext.Categories
+                category = await _dbContext.Categories
                     .FirstOrDefaultAsync(c => c.CategoryName.ToLower() == normalizedName);
             }
 
-            return null;
+            return category;
         }
 
         private async Task<Client> EnsureSellerClientProfileAsync(ApplicationUser user, CreateProductDto dto)
