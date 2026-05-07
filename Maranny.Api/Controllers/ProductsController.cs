@@ -651,18 +651,13 @@ namespace Maranny.API.Controllers
 
             return new
             {
-                product.ProductID,
                 id = product.ProductID,
                 productId = product.ProductID,
-                product.ProductName,
                 title = product.ProductName,
                 name = product.ProductName,
                 productName = product.ProductName,
-                product.Description,
                 description = product.Description,
-                product.Price,
                 price = product.Price,
-                product.Condition,
                 condition = product.Condition,
                 imageUrl = product.ID,
                 image = product.ID,
