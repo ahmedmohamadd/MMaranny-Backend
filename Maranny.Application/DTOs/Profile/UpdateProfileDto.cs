@@ -7,7 +7,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Maranny.Application.DTOs.Profile
 {
-    public class UpdateProfileDto
+    public class UpdateProfileDto : IValidatableObject
     {
         [Required(ErrorMessage = "First name is required")]
         [MinLength(2, ErrorMessage = "First name must be at least 2 characters")]
@@ -45,5 +45,22 @@ namespace Maranny.Application.DTOs.Profile
 
         [MaxLength(500)]
         public string? CertificateUrl { get; set; }
+
+        public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+        {
+            if (!string.IsNullOrWhiteSpace(Bio) && CountWords(Bio) < 20)
+            {
+                yield return new ValidationResult(
+                    "Bio is optional, but if added it must contain at least 20 words.",
+                    new[] { nameof(Bio) });
+            }
+        }
+
+        private static int CountWords(string value)
+        {
+            return value
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                .Length;
+        }
     }
 }

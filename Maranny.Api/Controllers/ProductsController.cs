@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Maranny.API.Controllers
 {
@@ -127,6 +128,18 @@ namespace Maranny.API.Controllers
                 return BadRequest(new { error = "Condition is required" });
             }
 
+            var showPhoneNumber = dto.ShowPhoneNumber ?? true;
+            var sellerPhone = dto.GetResolvedSellerPhone()?.Trim();
+            if (showPhoneNumber && string.IsNullOrWhiteSpace(sellerPhone))
+            {
+                return BadRequest(new { error = "Phone number is required when it is shown to buyers" });
+            }
+
+            if (showPhoneNumber && !IsValidEgyptianMobileNumber(sellerPhone))
+            {
+                return BadRequest(new { error = "Please enter a valid Egyptian mobile number." });
+            }
+
             var user = await _dbContext.Users
                 .Include(u => u.Client)
                 .Include(u => u.Coach)
@@ -161,6 +174,7 @@ namespace Maranny.API.Controllers
                 Condition = dto.Condition?.Trim(),
                 CategoryID = category.CategoryID,
                 ID = imageUrl,
+                ShowPhoneNumber = showPhoneNumber,
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -284,7 +298,7 @@ namespace Maranny.API.Controllers
                     ((p.Client.F_name + " " + p.Client.L_name).ToLower().Contains(searchLower)) ||
                     (p.Client.City != null && p.Client.City.ToLower().Contains(searchLower)) ||
                     (p.Client.Street_name != null && p.Client.Street_name.ToLower().Contains(searchLower)) ||
-                    (p.Client.User.PhoneNumber != null && p.Client.User.PhoneNumber.ToLower().Contains(searchLower)));
+                    (p.ShowPhoneNumber && p.Client.User.PhoneNumber != null && p.Client.User.PhoneNumber.ToLower().Contains(searchLower)));
             }
 
             query = query.OrderByDescending(p => p.CreatedAt).ThenByDescending(p => p.ProductID);
@@ -486,7 +500,7 @@ namespace Maranny.API.Controllers
                 client.Street_name ??= location.Trim();
             }
 
-            if (!string.IsNullOrWhiteSpace(phone))
+            if (dto.ShowPhoneNumber != false && !string.IsNullOrWhiteSpace(phone))
             {
                 user.PhoneNumber = phone.Trim();
             }
@@ -589,6 +603,17 @@ namespace Maranny.API.Controllers
             return relativeUrl;
         }
 
+        private static bool IsValidEgyptianMobileNumber(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            var normalized = Regex.Replace(value.Trim(), @"[\s\-()]", string.Empty);
+            return Regex.IsMatch(normalized, @"^(?:\+20|0)1[0125][0-9]{8}$");
+        }
+
         private async Task<Product?> LoadProductAsync(int productId)
         {
             return await _dbContext.Products
@@ -647,7 +672,7 @@ namespace Maranny.API.Controllers
                 ?? product.Client.City
                 ?? product.Client.Street_name;
 
-            var phone = product.Client.User.PhoneNumber;
+            var phone = product.ShowPhoneNumber ? product.Client.User.PhoneNumber : null;
 
             return new
             {
@@ -670,6 +695,7 @@ namespace Maranny.API.Controllers
                 categoryName = product.Category.CategoryName,
                 sellerName,
                 storeName = sellerName,
+                showPhoneNumber = product.ShowPhoneNumber,
                 sellerPhone = phone,
                 phoneNumber = phone,
                 contactPhone = phone,
@@ -688,6 +714,7 @@ namespace Maranny.API.Controllers
                     coachId = sellerProfile?.CoachId,
                     name = sellerName,
                     email = product.Client.User.Email,
+                    showPhoneNumber = product.ShowPhoneNumber,
                     phone = phone,
                     location = sellerLocation,
                     rating = sellerProfile?.Rating,

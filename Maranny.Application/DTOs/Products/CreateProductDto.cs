@@ -25,6 +25,7 @@ namespace Maranny.Application.DTOs.Products
         public string? SellerPhone { get; set; }
         public string? PhoneNumber { get; set; }
         public string? ContactPhone { get; set; }
+        public bool? ShowPhoneNumber { get; set; }
         public string? Location { get; set; }
         public string? SellerLocation { get; set; }
         public string? City { get; set; }

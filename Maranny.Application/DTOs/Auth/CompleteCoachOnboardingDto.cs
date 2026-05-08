@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Maranny.Application.DTOs.Auth
 {
-    public class CompleteCoachOnboardingDto
+    public class CompleteCoachOnboardingDto : IValidatableObject
     {
         [Required]
         [EmailAddress]
@@ -48,6 +48,23 @@ namespace Maranny.Application.DTOs.Auth
 
         [MaxLength(500)]
         public string? CertificateUrl { get; set; }
+
+        public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+        {
+            if (!string.IsNullOrWhiteSpace(Bio) && CountWords(Bio) < 20)
+            {
+                yield return new ValidationResult(
+                    "Bio is optional, but if added it must contain at least 20 words.",
+                    new[] { nameof(Bio) });
+            }
+        }
+
+        private static int CountWords(string value)
+        {
+            return value
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                .Length;
+        }
     }
 
     public class CoachOnboardingSportDto

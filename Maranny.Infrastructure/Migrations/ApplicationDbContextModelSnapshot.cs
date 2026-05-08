@@ -874,6 +874,9 @@ namespace Maranny.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<bool>("ShowPhoneNumber")
+                        .HasColumnType("bit");
+
                     b.Property<string>("URL")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");

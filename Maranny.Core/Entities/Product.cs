@@ -39,6 +39,8 @@ namespace Maranny.Core.Entities
         [MaxLength(500)]
         public string? URL { get; set; }
 
+        public bool ShowPhoneNumber { get; set; } = true;
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         // Navigation Properties

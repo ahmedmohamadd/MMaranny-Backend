@@ -64,6 +64,12 @@ namespace Maranny.API.Controllers
                 return BadRequest(new { error = "Session is not available for booking" });
             }
 
+            var sessionDurationMinutes = (session.End_Time - session.Start_Time).TotalMinutes;
+            if (sessionDurationMinutes < 45 || sessionDurationMinutes > 60)
+            {
+                return BadRequest(new { error = "Session duration must be between 45 and 60 minutes" });
+            }
+
             var sessionDateTime = session.SessionDate.Add(session.Start_Time);
             if (sessionDateTime <= DateTime.UtcNow)
             {
@@ -106,6 +112,18 @@ namespace Maranny.API.Controllers
             if (overlappingBooking != null)
             {
                 return BadRequest(new { error = "You have an overlapping booking at this time" });
+            }
+
+            var activeBookingsOnSameDay = await _dbContext.Bookings
+                .Include(b => b.TrainingSession)
+                .CountAsync(b => b.ClientID == client.ClientID &&
+                                 (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed) &&
+                                 b.TrainingSession.SessionDate.Date == session.SessionDate.Date &&
+                                 b.TrainingSession.Status != SessionStatus.Cancelled);
+
+            if (activeBookingsOnSameDay >= 2)
+            {
+                return BadRequest(new { error = "You can only book up to 2 sessions per day." });
             }
 
             var booking = new Booking
@@ -877,6 +895,12 @@ namespace Maranny.API.Controllers
             if (endTime <= startTime)
             {
                 return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "End time must be after start time" }) };
+            }
+
+            var requestedDurationMinutes = (endTime - startTime.Value).TotalMinutes;
+            if (requestedDurationMinutes < 45 || requestedDurationMinutes > 60)
+            {
+                return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Session duration must be between 45 and 60 minutes" }) };
             }
 
             var sessionDate = dto.SessionDate.Value.Date;
