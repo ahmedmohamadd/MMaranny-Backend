@@ -840,6 +840,8 @@ namespace Maranny.API.Controllers
             coach.ID = dto.NationalId.Trim();
             coach.Bio = dto.Bio?.Trim();
             coach.ExperienceYears = dto.ExperienceYears;
+            coach.Gender = Enum.Parse<Gender>(dto.Gender, ignoreCase: true);
+            coach.Age = dto.Age;
             coach.CertificateUrl = dto.CertificateUrl?.Trim();
             coach.AvailabilityStatus = SerializeAvailability(dto.AvailableDays, dto.AvailableHours, dto.DayHourSlots);
         }

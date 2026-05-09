@@ -20,6 +20,14 @@ namespace Maranny.Application.DTOs.Auth
         public string NationalId { get; set; } = string.Empty;
 
         [Required]
+        [RegularExpression("^(Male|Female)$", ErrorMessage = "Gender must be Male or Female")]
+        public string Gender { get; set; } = string.Empty;
+
+        [Required]
+        [Range(20, 50)]
+        public int Age { get; set; }
+
+        [Required]
         [MaxLength(100)]
         public string City { get; set; } = string.Empty;
 

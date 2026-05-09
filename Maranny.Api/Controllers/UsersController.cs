@@ -95,9 +95,6 @@ namespace Maranny.API.Controllers
 
                 if (!string.IsNullOrWhiteSpace(dto.CertificateUrl))
                     user.Coach.CertificateUrl = dto.CertificateUrl;
-
-                if (!string.IsNullOrWhiteSpace(dto.Gender) && Enum.TryParse<Gender>(dto.Gender, out var coachGender))
-                    user.Coach.Gender = coachGender;
             }
 
             await _dbContext.SaveChangesAsync();
@@ -235,6 +232,8 @@ namespace Maranny.API.Controllers
                 lastName = coach.L_name,
                 coach.Bio,
                 coach.ExperienceYears,
+                gender = coach.Gender.HasValue ? coach.Gender.ToString() : null,
+                coach.Age,
                 coach.CertificateUrl,
                 verificationStatus = coach.VerificationStatus.ToString(),
                 availableDays,

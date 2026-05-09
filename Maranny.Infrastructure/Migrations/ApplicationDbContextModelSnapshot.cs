@@ -507,6 +507,9 @@ namespace Maranny.Infrastructure.Migrations
                     b.Property<decimal?>("AvgRating")
                         .HasColumnType("decimal(3,2)");
 
+                    b.Property<int?>("Age")
+                        .HasColumnType("int");
+
                     b.Property<string>("BankAccountNo")
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");

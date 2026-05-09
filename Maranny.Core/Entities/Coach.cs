@@ -61,6 +61,9 @@ namespace Maranny.Core.Entities
 
         public Gender? Gender { get; set; }
 
+        [Range(20, 50)]
+        public int? Age { get; set; }
+
         [Required(ErrorMessage = "National ID is required")]
         [MaxLength(500)]
         public string NationalIdImageUrl { get; set; } = string.Empty;
