@@ -34,6 +34,13 @@ namespace Maranny.Core.Entities
         [MaxLength(50)]
         public string MessageType { get; set; } = "text";
 
+        [MaxLength(500)]
+        public string? AttachmentUrl { get; set; }
+
+        public double? Latitude { get; set; }
+
+        public double? Longitude { get; set; }
+
         // Navigation Properties
         [ForeignKey(nameof(SenderID))]
         public virtual ApplicationUser Sender { get; set; } = null!;

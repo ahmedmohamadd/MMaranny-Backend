@@ -25,7 +25,14 @@ namespace Maranny.Infrastructure.Services
             _hubContext = hubContext;
         }
 
-        public async Task<ChatMessage> SendMessageAsync(int senderId, int receiverId, string content)
+        public async Task<ChatMessage> SendMessageAsync(
+            int senderId,
+            int receiverId,
+            string content,
+            string messageType = "text",
+            string? attachmentUrl = null,
+            double? latitude = null,
+            double? longitude = null)
         {
             // Create message
             var message = new ChatMessage
@@ -35,7 +42,10 @@ namespace Maranny.Infrastructure.Services
                 Content = content,
                 SentAt = DateTime.UtcNow,
                 IsRead = false,
-                MessageType = "text"
+                MessageType = string.IsNullOrWhiteSpace(messageType) ? "text" : messageType.Trim(),
+                AttachmentUrl = attachmentUrl,
+                Latitude = latitude,
+                Longitude = longitude
             };
 
             _dbContext.ChatMessages.Add(message);
@@ -56,6 +66,10 @@ namespace Maranny.Infrastructure.Services
                 message.Content,
                 message.SentAt,
                 message.IsRead,
+                message.MessageType,
+                message.AttachmentUrl,
+                message.Latitude,
+                message.Longitude,
                 SenderName = message.Sender.Email
             };
 
@@ -112,7 +126,11 @@ namespace Maranny.Infrastructure.Services
     : otherUser.Coach != null
         ? otherUser.Coach.F_name + " " + otherUser.Coach.L_name
         : otherUser.Email),
-                        LastMessage = conv.LastMessage.Content,
+                        LastMessage = conv.LastMessage.MessageType == "image"
+                            ? "Photo attachment"
+                            : conv.LastMessage.MessageType == "location"
+                                ? "Location shared"
+                                : conv.LastMessage.Content,
                         LastMessageTime = conv.LastMessage.SentAt,
                         UnreadCount = conv.UnreadCount,
                         IsOnline = ChatHub.IsUserOnline(conv.OtherUserId)
