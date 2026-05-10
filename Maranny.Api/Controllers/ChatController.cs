@@ -52,6 +52,7 @@ namespace Maranny.API.Controllers
                     message.AttachmentUrl,
                     message.Latitude,
                     message.Longitude,
+                    message.Reaction,
                     sentAt = message.SentAt
                 });
             }
@@ -148,6 +149,7 @@ namespace Maranny.API.Controllers
                     message.AttachmentUrl,
                     message.Latitude,
                     message.Longitude,
+                    message.Reaction,
                     sentAt = message.SentAt
                 });
             }
@@ -181,6 +183,7 @@ namespace Maranny.API.Controllers
                 m.AttachmentUrl,
                 m.Latitude,
                 m.Longitude,
+                m.Reaction,
                 IsMine = m.SenderID == userId
             });
 
@@ -225,6 +228,38 @@ namespace Maranny.API.Controllers
             var count = await _chatService.GetUnreadMessageCountAsync(userId, fromUserId);
             return Ok(new { unreadCount = count });
         }
+
+        [HttpPost("messages/{messageId}/reaction")]
+        [HttpPut("messages/{messageId}/reaction")]
+        public async Task<IActionResult> SetReaction(int messageId, [FromBody] SetReactionRequest request)
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized();
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.Reaction) && request.Reaction.Length > 20)
+            {
+                return BadRequest(new { error = "Reaction is too long" });
+            }
+
+            var message = await _chatService.SetMessageReactionAsync(
+                userId,
+                messageId,
+                request.Reaction);
+
+            if (message == null)
+            {
+                return NotFound(new { error = "Message not found" });
+            }
+
+            return Ok(new
+            {
+                message.MessageID,
+                message.Reaction
+            });
+        }
     }
 
     public class SendMessageRequest
@@ -245,5 +280,10 @@ namespace Maranny.API.Controllers
         public IFormFile? File { get; set; }
         public double? Latitude { get; set; }
         public double? Longitude { get; set; }
+    }
+
+    public class SetReactionRequest
+    {
+        public string? Reaction { get; set; }
     }
 }

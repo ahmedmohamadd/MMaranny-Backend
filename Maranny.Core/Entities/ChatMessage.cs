@@ -41,6 +41,9 @@ namespace Maranny.Core.Entities
 
         public double? Longitude { get; set; }
 
+        [MaxLength(20)]
+        public string? Reaction { get; set; }
+
         // Navigation Properties
         [ForeignKey(nameof(SenderID))]
         public virtual ApplicationUser Sender { get; set; } = null!;

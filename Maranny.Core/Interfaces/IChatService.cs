@@ -21,5 +21,6 @@ namespace Maranny.Core.Interfaces
         Task<List<object>> GetUserConversationsAsync(int userId);
         Task MarkMessagesAsReadAsync(int senderId, int receiverId);
         Task<int> GetUnreadMessageCountAsync(int userId, int? fromUserId = null);
+        Task<ChatMessage?> SetMessageReactionAsync(int userId, int messageId, string? reaction);
     }
 }

@@ -308,6 +308,10 @@ namespace Maranny.Infrastructure.Migrations
                     b.Property<DateTime?>("ReadAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("Reaction")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<int>("ReceiverID")
                         .HasColumnType("int");
 

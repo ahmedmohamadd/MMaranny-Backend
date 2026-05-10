@@ -70,6 +70,7 @@ namespace Maranny.Infrastructure.Services
                 message.AttachmentUrl,
                 message.Latitude,
                 message.Longitude,
+                message.Reaction,
                 SenderName = message.Sender.Email
             };
 
@@ -167,6 +168,37 @@ namespace Maranny.Infrastructure.Services
             }
 
             return await query.CountAsync();
+        }
+
+        public async Task<ChatMessage?> SetMessageReactionAsync(int userId, int messageId, string? reaction)
+        {
+            var message = await _dbContext.ChatMessages
+                .FirstOrDefaultAsync(m => m.MessageID == messageId &&
+                    (m.SenderID == userId || m.ReceiverID == userId));
+
+            if (message == null)
+            {
+                return null;
+            }
+
+            message.Reaction = string.IsNullOrWhiteSpace(reaction)
+                ? null
+                : reaction.Trim();
+
+            await _dbContext.SaveChangesAsync();
+
+            var reactionData = new
+            {
+                message.MessageID,
+                message.SenderID,
+                message.ReceiverID,
+                message.Reaction
+            };
+
+            await ChatHub.SendMessageToUser(_hubContext, message.SenderID, reactionData);
+            await ChatHub.SendMessageToUser(_hubContext, message.ReceiverID, reactionData);
+
+            return message;
         }
     }
 }
