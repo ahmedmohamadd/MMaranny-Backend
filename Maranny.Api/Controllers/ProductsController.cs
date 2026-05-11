@@ -102,126 +102,137 @@ namespace Maranny.API.Controllers
                     return Unauthorized();
                 }
 
-            if (!Request.HasFormContentType)
-            {
-                dto = await TryReadJsonCreateProductDtoAsync() ?? dto;
-            }
-
-            var productName = dto.GetResolvedProductName()?.Trim();
-            if (string.IsNullOrWhiteSpace(productName) || productName.Length < 3)
-            {
-                return BadRequest(new { error = "Product title is required and must be at least 3 characters" });
-            }
-
-            if (string.IsNullOrWhiteSpace(dto.Description) || dto.Description.Trim().Length < 10)
-            {
-                return BadRequest(new { error = "Description is required and must be at least 10 characters" });
-            }
-
-            if (!dto.Price.HasValue || dto.Price.Value <= 0)
-            {
-                return BadRequest(new { error = "Price is required and must be greater than zero" });
-            }
-
-            if (string.IsNullOrWhiteSpace(dto.Condition))
-            {
-                return BadRequest(new { error = "Condition is required" });
-            }
-
-            var showPhoneNumber = dto.ShowPhoneNumber ?? true;
-            var sellerPhone = dto.GetResolvedSellerPhone()?.Trim();
-            if (showPhoneNumber && string.IsNullOrWhiteSpace(sellerPhone))
-            {
-                return BadRequest(new { error = "Phone number is required when it is shown to buyers" });
-            }
-
-            if (showPhoneNumber && !IsValidEgyptianMobileNumber(sellerPhone))
-            {
-                return BadRequest(new { error = "Please enter a valid Egyptian mobile number." });
-            }
-
-            var user = await _dbContext.Users
-                .Include(u => u.Client)
-                .Include(u => u.Coach)
-                    .ThenInclude(c => c.CoachLocations)
-                .FirstOrDefaultAsync(u => u.Id == userId.Value);
-
-            if (user == null)
-            {
-                return Unauthorized();
-            }
-
-            var category = await ResolveCategoryAsync(dto.GetResolvedCategoryId(), dto.GetResolvedCategoryName());
-            if (category == null)
-            {
-                return BadRequest(new { error = "Valid product category is required" });
-            }
-
-            var client = await EnsureSellerClientProfileAsync(user, dto);
-            _logger.LogInformation(
-                "CreateProduct incoming request: HasFormContentType={HasFormContentType}, FormFileCount={FormFileCount}, ContentType={ContentType}",
-                Request.HasFormContentType,
-                Request.HasFormContentType ? Request.Form.Files.Count : 0,
-                Request.ContentType ?? string.Empty);
-            var imageUrl = await ResolveImageUrlAsync(dto, image, Request.HasFormContentType ? Request.Form.Files : null);
-
-            var product = new Product
-            {
-                ClientID = client.ClientID,
-                ProductName = productName,
-                Description = dto.Description?.Trim(),
-                Price = dto.Price.Value,
-                Condition = dto.Condition?.Trim(),
-                CategoryID = category.CategoryID,
-                ID = imageUrl,
-                ShowPhoneNumber = showPhoneNumber,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            _logger.LogInformation(
-                "CreateProduct before SaveChanges: ProductID={ProductID}, ProductImageUrl={ProductImageUrl}",
-                product.ProductID,
-                product.ID ?? string.Empty);
-            _dbContext.Products.Add(product);
-            await _dbContext.SaveChangesAsync();
-            _logger.LogInformation(
-                "CreateProduct after SaveChanges: ProductID={ProductID}, ProductImageUrl={ProductImageUrl}",
-                product.ProductID,
-                product.ID ?? string.Empty);
-
-            if (dto.SportIDs != null && dto.SportIDs.Any())
-            {
-                var validSportIds = await _dbContext.Sports
-                    .Where(s => dto.SportIDs.Contains(s.Id))
-                    .Select(s => s.Id)
-                    .ToListAsync();
-
-                foreach (var sportId in validSportIds.Distinct())
+                if (!Request.HasFormContentType)
                 {
-                    _dbContext.SportProducts.Add(new SportProduct
-                    {
-                        SportID = sportId,
-                        ProductID = product.ProductID
-                    });
+                    dto = await TryReadJsonCreateProductDtoAsync() ?? dto;
                 }
 
+                var productName = dto.GetResolvedProductName()?.Trim();
+                if (string.IsNullOrWhiteSpace(productName) || productName.Length < 3)
+                {
+                    return BadRequest(new { error = "Product title is required and must be at least 3 characters" });
+                }
+
+                if (string.IsNullOrWhiteSpace(dto.Description) || dto.Description.Trim().Length < 10)
+                {
+                    return BadRequest(new { error = "Description is required and must be at least 10 characters" });
+                }
+
+                if (!dto.Price.HasValue || dto.Price.Value <= 0)
+                {
+                    return BadRequest(new { error = "Price is required and must be greater than zero" });
+                }
+
+                if (string.IsNullOrWhiteSpace(dto.Condition))
+                {
+                    return BadRequest(new { error = "Condition is required" });
+                }
+
+                var showPhoneNumber = dto.ShowPhoneNumber ?? true;
+                var sellerPhone = dto.GetResolvedSellerPhone()?.Trim();
+                if (showPhoneNumber && string.IsNullOrWhiteSpace(sellerPhone))
+                {
+                    return BadRequest(new { error = "Phone number is required when it is shown to buyers" });
+                }
+
+                if (showPhoneNumber && !IsValidEgyptianMobileNumber(sellerPhone))
+                {
+                    return BadRequest(new { error = "Please enter a valid Egyptian mobile number." });
+                }
+
+                var listingLocation = dto.GetResolvedLocation()?.Trim();
+                if (string.IsNullOrWhiteSpace(listingLocation))
+                {
+                    return BadRequest(new { error = "Pickup location is required" });
+                }
+
+                var user = await _dbContext.Users
+                    .Include(u => u.Client)
+                    .Include(u => u.Coach!)
+                        .ThenInclude(c => c.CoachLocations)
+                    .FirstOrDefaultAsync(u => u.Id == userId.Value);
+
+                if (user == null)
+                {
+                    return Unauthorized();
+                }
+
+                var category = await ResolveCategoryAsync(dto.GetResolvedCategoryId(), dto.GetResolvedCategoryName());
+                if (category == null)
+                {
+                    return BadRequest(new { error = "Valid product category is required" });
+                }
+
+                var client = await EnsureSellerClientProfileAsync(user, dto);
+                _logger.LogInformation(
+                    "CreateProduct incoming request: HasFormContentType={HasFormContentType}, FormFileCount={FormFileCount}, ContentType={ContentType}",
+                    Request.HasFormContentType,
+                    Request.HasFormContentType ? Request.Form.Files.Count : 0,
+                    Request.ContentType ?? string.Empty);
+                var imageUrl = await ResolveImageUrlAsync(dto, image, Request.HasFormContentType ? Request.Form.Files : null);
+                if (string.IsNullOrWhiteSpace(imageUrl))
+                {
+                    return BadRequest(new { error = "Product photo is required" });
+                }
+
+                var product = new Product
+                {
+                    ClientID = client.ClientID,
+                    ProductName = productName,
+                    Description = dto.Description?.Trim(),
+                    Price = dto.Price.Value,
+                    Condition = dto.Condition?.Trim(),
+                    CategoryID = category.CategoryID,
+                    ID = imageUrl,
+                    ListingLocation = listingLocation,
+                    ShowPhoneNumber = showPhoneNumber,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                _logger.LogInformation(
+                    "CreateProduct before SaveChanges: ProductID={ProductID}, ProductImageUrl={ProductImageUrl}",
+                    product.ProductID,
+                    product.ID ?? string.Empty);
+                _dbContext.Products.Add(product);
                 await _dbContext.SaveChangesAsync();
-            }
+                _logger.LogInformation(
+                    "CreateProduct after SaveChanges: ProductID={ProductID}, ProductImageUrl={ProductImageUrl}",
+                    product.ProductID,
+                    product.ID ?? string.Empty);
 
-                        var createdProduct = await LoadProductAsync(product.ProductID);
-            if (createdProduct == null)
-            {
-                return StatusCode(500, new { error = "Product was created but could not be loaded afterwards" });
-            }
+                if (dto.SportIDs != null && dto.SportIDs.Any())
+                {
+                    var validSportIds = await _dbContext.Sports
+                        .Where(s => dto.SportIDs.Contains(s.Id))
+                        .Select(s => s.Id)
+                        .ToListAsync();
 
-            var sellerProfiles = await LoadSellerProfilesAsync(new[] { createdProduct });
+                    foreach (var sportId in validSportIds.Distinct())
+                    {
+                        _dbContext.SportProducts.Add(new SportProduct
+                        {
+                            SportID = sportId,
+                            ProductID = product.ProductID
+                        });
+                    }
 
-            return Ok(new
-            {
-                message = "Product created successfully",
-                productId = product.ProductID,
-                product = BuildProductPayload(createdProduct, sellerProfiles)
-            });
+                    await _dbContext.SaveChangesAsync();
+                }
+
+                var createdProduct = await LoadProductAsync(product.ProductID);
+                if (createdProduct == null)
+                {
+                    return StatusCode(500, new { error = "Product was created but could not be loaded afterwards" });
+                }
+
+                var sellerProfiles = await LoadSellerProfilesAsync(new[] { createdProduct });
+
+                return Ok(new
+                {
+                    message = "Product created successfully",
+                    productId = product.ProductID,
+                    product = BuildProductPayload(createdProduct, sellerProfiles)
+                });
             }
             catch (Exception ex)
             {
@@ -671,9 +682,12 @@ namespace Maranny.API.Controllers
                 ? sellerProfile!.Name
                 : $"{product.Client.F_name} {product.Client.L_name}".Trim();
 
-            var sellerLocation = product.Client.City
-                ?? product.Client.Street_name
-                ?? sellerProfile?.Location;
+            var pickupLocation = product.ListingLocation
+                ?? product.Client.City
+                ?? product.Client.Street_name;
+            var sellerLocation = sellerProfile?.Location
+                ?? product.Client.City
+                ?? product.Client.Street_name;
 
             var phone = product.ShowPhoneNumber ? product.Client.User.PhoneNumber : null;
 
@@ -702,9 +716,12 @@ namespace Maranny.API.Controllers
                 sellerPhone = phone,
                 phoneNumber = phone,
                 contactPhone = phone,
+                listingLocation = pickupLocation,
+                pickupLocation,
+                productLocation = pickupLocation,
                 sellerLocation,
-                location = sellerLocation,
-                city = sellerLocation,
+                location = pickupLocation ?? sellerLocation,
+                city = pickupLocation ?? sellerLocation,
                 rating = sellerProfile?.Rating,
                 reviewsCount = sellerProfile?.ReviewsCount ?? 0,
                 sellerRating = sellerProfile?.Rating,

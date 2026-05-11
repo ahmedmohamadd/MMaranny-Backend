@@ -28,6 +28,8 @@ namespace Maranny.Application.DTOs.Products
         public bool? ShowPhoneNumber { get; set; }
         public string? Location { get; set; }
         public string? SellerLocation { get; set; }
+        public string? ListingLocation { get; set; }
+        public string? PickupLocation { get; set; }
         public string? City { get; set; }
 
         [MaxLength(500)]
@@ -42,7 +44,7 @@ namespace Maranny.Application.DTOs.Products
         public string? GetResolvedCategoryName() => Category ?? CategoryName;
         public string? GetResolvedSellerName() => SellerName ?? StoreName;
         public string? GetResolvedSellerPhone() => SellerPhone ?? PhoneNumber ?? ContactPhone;
-        public string? GetResolvedLocation() => Location ?? SellerLocation ?? City;
+        public string? GetResolvedLocation() => ListingLocation ?? PickupLocation ?? Location ?? SellerLocation ?? City;
         public string? GetResolvedImageUrl() => ImageUrl ?? PhotoUrl;
     }
 }

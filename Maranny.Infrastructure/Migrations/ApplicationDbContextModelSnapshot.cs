@@ -883,6 +883,10 @@ namespace Maranny.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<string>("ListingLocation")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
                     b.Property<decimal>("Price")
                         .HasColumnType("decimal(10,2)");
 
