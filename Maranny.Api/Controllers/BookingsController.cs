@@ -859,13 +859,11 @@ namespace Maranny.API.Controllers
             }
 
             var coachLocations = coach.CoachLocations
-                .Select(cl => cl.WorkingLocation)
-                .Where(location => !string.IsNullOrWhiteSpace(location))
-                .Select(location => location.Trim())
+                .SelectMany(cl => NormalizeLocationChoices(cl.WorkingLocation))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var requestedLocation = dto.Location?.Trim();
+            var requestedLocation = NormalizeSingleLocation(dto.Location);
             if (coachLocations.Any())
             {
                 if (string.IsNullOrWhiteSpace(requestedLocation))
@@ -1060,6 +1058,37 @@ namespace Maranny.API.Controllers
         {
             var parsedAvailability = ParseFlexibleTime(availabilityHour);
             return parsedAvailability.HasValue && parsedAvailability.Value == selectedTime;
+        }
+
+        private static List<string> NormalizeLocationChoices(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return new List<string>();
+            }
+
+            return value
+                .Replace("[", string.Empty)
+                .Replace("]", string.Empty)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(NormalizeSingleLocation)
+                .Where(location => !string.IsNullOrWhiteSpace(location))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList()!;
+        }
+
+        private static string? NormalizeSingleLocation(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            return value
+                .Trim()
+                .Trim('"', '\'')
+                .Replace("\\\"", string.Empty)
+                .Trim();
         }
 
         private static AvailabilityPayload ParseAvailability(string? availabilityStatus)
