@@ -161,7 +161,7 @@ namespace Maranny.API.Controllers
             await TrySendNotificationAsync(
                 session.Coach.UserId,
                 "New Booking",
-                $"You have a new booking for {session.SessionDate:MMM dd} at {session.Start_Time}",
+                $"You have a new booking for {session.SessionDate:MMM dd} at {session.Start_Time}. Location: {session.Location ?? "Not specified"}. Please coordinate any cancellation with the client at least 24 hours before the session starts.",
                 NotificationType.BookingConfirmation);
 
             return Ok(new
