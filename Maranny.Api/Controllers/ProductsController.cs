@@ -414,7 +414,10 @@ namespace Maranny.API.Controllers
 
             if (!User.IsInRole("Admin") && product.Client.UserId != userId.Value)
             {
-                return Forbid();
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    error = "You cannot delete another user listing."
+                });
             }
 
             var sportProducts = await _dbContext.SportProducts
