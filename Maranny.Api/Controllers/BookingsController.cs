@@ -858,6 +858,27 @@ namespace Maranny.API.Controllers
                 return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Coach must be verified before accepting bookings" }) };
             }
 
+            var coachLocations = coach.CoachLocations
+                .Select(cl => cl.WorkingLocation)
+                .Where(location => !string.IsNullOrWhiteSpace(location))
+                .Select(location => location.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var requestedLocation = dto.Location?.Trim();
+            if (coachLocations.Any())
+            {
+                if (string.IsNullOrWhiteSpace(requestedLocation))
+                {
+                    return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Please choose one of the coach's available locations" }) };
+                }
+
+                if (!coachLocations.Any(location => location.Equals(requestedLocation, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Selected location is not available for this coach" }) };
+                }
+            }
+
             var requestedSportId = dto.SportID;
             if (!requestedSportId.HasValue)
             {
@@ -948,7 +969,7 @@ namespace Maranny.API.Controllers
                 SportID = requestedSportId.Value,
                 SessionDate = sessionDate,
                 SessionType = dto.SessionType ?? "Private Session",
-                Location = dto.Location ?? coach.CoachLocations.Select(cl => cl.WorkingLocation).FirstOrDefault(),
+                Location = requestedLocation ?? coachLocations.FirstOrDefault(),
                 MaxParticipants = dto.MaxParticipants ?? 1,
                 Start_Time = startTime.Value,
                 End_Time = endTime,
