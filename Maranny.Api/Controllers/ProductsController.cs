@@ -668,9 +668,9 @@ namespace Maranny.API.Controllers
                 ? sellerProfile!.Name
                 : $"{product.Client.F_name} {product.Client.L_name}".Trim();
 
-            var sellerLocation = sellerProfile?.Location
-                ?? product.Client.City
-                ?? product.Client.Street_name;
+            var sellerLocation = product.Client.City
+                ?? product.Client.Street_name
+                ?? sellerProfile?.Location;
 
             var phone = product.ShowPhoneNumber ? product.Client.User.PhoneNumber : null;
 
