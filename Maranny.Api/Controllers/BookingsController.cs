@@ -460,6 +460,7 @@ namespace Maranny.API.Controllers
                     client = new
                     {
                         b.Client.ClientID,
+                        UserID = b.Client.UserId,
                         name = b.Client.F_name + " " + b.Client.L_name,
                         b.Client.URL
                     },
