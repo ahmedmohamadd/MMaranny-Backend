@@ -62,10 +62,21 @@ namespace Maranny.API.Controllers
                 return BadRequest(new { error = "You did not attend this session" });
             }
 
-            // Verify session is completed
-            if (session.Status != SessionStatus.Completed)
+            var booking = await _dbContext.Bookings
+                .FirstOrDefaultAsync(b => b.ClientID == client.ClientID && b.SessionID == dto.SessionID);
+
+            var sessionHasEnded = HasSessionEndedInCairo(session);
+            var bookingIsConfirmedOrCompleted =
+                booking?.Status == BookingStatus.Confirmed ||
+                booking?.Status == BookingStatus.Completed;
+
+            // Reviews are allowed after the confirmed session time has passed.
+            // Some mobile-created sessions remain Scheduled until the first review, so
+            // relying only on SessionStatus.Completed makes valid past sessions fail.
+            if (session.Status != SessionStatus.Completed &&
+                (!sessionHasEnded || !bookingIsConfirmedOrCompleted))
             {
-                return BadRequest(new { error = "Cannot review a session that is not completed" });
+                return BadRequest(new { error = "You can review this session after it is completed" });
             }
 
             // Check if review already exists (one review per client per coach per session)
@@ -89,6 +100,17 @@ namespace Maranny.API.Controllers
             };
 
             _dbContext.Reviews.Add(review);
+
+            if (session.Status != SessionStatus.Completed)
+            {
+                session.Status = SessionStatus.Completed;
+            }
+
+            if (booking != null && booking.Status != BookingStatus.Completed)
+            {
+                booking.Status = BookingStatus.Completed;
+            }
+
             await _dbContext.SaveChangesAsync();
 
             // Update coach average rating
@@ -99,6 +121,33 @@ namespace Maranny.API.Controllers
                 message = "Review submitted successfully",
                 reviewId = review.ReviewID
             });
+        }
+
+        private static bool HasSessionEndedInCairo(TrainingSession session)
+        {
+            var sessionEnd = session.SessionDate.Date + session.End_Time;
+            var cairoNow = GetCairoNow();
+            return sessionEnd <= cairoNow;
+        }
+
+        private static DateTime GetCairoNow()
+        {
+            foreach (var timeZoneId in new[] { "Egypt Standard Time", "Africa/Cairo" })
+            {
+                try
+                {
+                    var cairoTimeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+                    return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, cairoTimeZone);
+                }
+                catch (TimeZoneNotFoundException)
+                {
+                }
+                catch (InvalidTimeZoneException)
+                {
+                }
+            }
+
+            return DateTime.UtcNow.AddHours(3);
         }
 
         [HttpGet("coach/{coachId}")]
