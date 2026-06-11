@@ -150,6 +150,25 @@ namespace Maranny.API.Controllers
             return DateTime.UtcNow.AddHours(3);
         }
 
+        [HttpGet("my-coach-reviews")]
+        [Authorize(Roles = "Coach")]
+        public async Task<IActionResult> GetMyCoachReviews([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized();
+            }
+
+            var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId);
+            if (coach == null)
+            {
+                return NotFound(new { error = "Coach profile not found" });
+            }
+
+            return await BuildCoachReviewsResponse(coach.CoachID, page, pageSize);
+        }
+
         [HttpGet("coach/{coachId}")]
         [AllowAnonymous]
         public async Task<IActionResult> GetCoachReviews(int coachId, [FromQuery] int page = 1, [FromQuery] int pageSize = 10)
@@ -161,27 +180,44 @@ namespace Maranny.API.Controllers
                 return NotFound(new { error = "Coach not found" });
             }
 
+            return await BuildCoachReviewsResponse(coachId, page, pageSize);
+        }
+
+        private async Task<IActionResult> BuildCoachReviewsResponse(int coachId, int page, int pageSize)
+        {
+            page = Math.Max(page, 1);
+            pageSize = Math.Clamp(pageSize, 1, 100);
+
             // Get reviews with pagination
             var query = _dbContext.Reviews
                 .Include(r => r.Client)
+                .Include(r => r.TrainingSession)
+                    .ThenInclude(s => s.Sport)
                 .Where(r => r.CoachID == coachId)
                 .OrderByDescending(r => r.CreatedAt);
 
             var totalCount = await query.CountAsync();
+            var averageRating = await query.AverageAsync(r => (decimal?)r.Rating) ?? 0;
 
             var reviews = await query
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .Select(r => new
                 {
-                    r.ReviewID,
-                    r.Rating,
-                    r.Comment,
-                    r.CoachResponse,
-                    r.ResponseDate,
-                    r.CreatedAt,
+                    reviewId = r.ReviewID,
+                    rating = r.Rating,
+                    comment = r.Comment,
+                    coachResponse = r.CoachResponse,
+                    responseDate = r.ResponseDate,
+                    createdAt = r.CreatedAt,
+                    sessionId = r.SessionID,
+                    coachId = r.CoachID,
+                    clientId = r.ClientID,
+                    sportName = r.TrainingSession.Sport.Name,
                     client = new
                     {
+                        id = r.Client.ClientID,
+                        clientID = r.Client.ClientID,
                         name = r.Client.F_name + " " + r.Client.L_name,
                         profilePicture = r.Client.URL
                     }
@@ -194,7 +230,7 @@ namespace Maranny.API.Controllers
                 page = page,
                 pageSize = pageSize,
                 totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
-                averageRating = coach.AvgRating,
+                averageRating = averageRating,
                 reviews = reviews
             });
         }
