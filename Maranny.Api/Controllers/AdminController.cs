@@ -555,15 +555,30 @@ namespace Maranny.API.Controllers
             // Total users
             var totalUsers = await _dbContext.Users.CountAsync();
 
+            // Role counts are the safest source for admin dashboard totals.
+            // The Clients table can include marketplace seller profiles for coaches.
+            var clientRoleId = await _dbContext.Roles
+                .Where(r => r.Name == "Client")
+                .Select(r => (int?)r.Id)
+                .FirstOrDefaultAsync();
+            var coachRoleId = await _dbContext.Roles
+                .Where(r => r.Name == "Coach")
+                .Select(r => (int?)r.Id)
+                .FirstOrDefaultAsync();
+
             // Total coaches
-            var totalCoaches = await _dbContext.Coaches.CountAsync();
+            var totalCoaches = coachRoleId.HasValue
+                ? await _dbContext.UserRoles.CountAsync(ur => ur.RoleId == coachRoleId.Value)
+                : await _dbContext.Users.CountAsync(u => u.PrimaryUserType == UserType.Coach);
             var verifiedCoaches = await _dbContext.Coaches
                 .CountAsync(c => c.VerificationStatus == VerificationStatus.Approved);
             var pendingCoaches = await _dbContext.Coaches
                 .CountAsync(c => c.VerificationStatus == VerificationStatus.Pending);
 
-            // Total clients
-            var totalClients = await _dbContext.Clients.CountAsync();
+            // Total trainees (client accounts in the app)
+            var totalClients = clientRoleId.HasValue
+                ? await _dbContext.UserRoles.CountAsync(ur => ur.RoleId == clientRoleId.Value)
+                : await _dbContext.Users.CountAsync(u => u.PrimaryUserType == UserType.Client);
 
             // Total bookings
             var totalBookings = await _dbContext.Bookings.CountAsync();
@@ -582,6 +597,28 @@ namespace Maranny.API.Controllers
             var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
             var newUsersThisMonth = await _dbContext.Users
                 .CountAsync(u => u.CreatedAt >= startOfMonth);
+            var newClientsThisMonth = clientRoleId.HasValue
+                ? await _dbContext.UserRoles
+                    .Where(ur => ur.RoleId == clientRoleId.Value)
+                    .Join(
+                        _dbContext.Users,
+                        ur => ur.UserId,
+                        user => user.Id,
+                        (ur, user) => user)
+                    .CountAsync(user => user.CreatedAt >= startOfMonth)
+                : await _dbContext.Users
+                    .CountAsync(u => u.PrimaryUserType == UserType.Client && u.CreatedAt >= startOfMonth);
+            var newCoachesThisMonth = coachRoleId.HasValue
+                ? await _dbContext.UserRoles
+                    .Where(ur => ur.RoleId == coachRoleId.Value)
+                    .Join(
+                        _dbContext.Users,
+                        ur => ur.UserId,
+                        user => user.Id,
+                        (ur, user) => user)
+                    .CountAsync(user => user.CreatedAt >= startOfMonth)
+                : await _dbContext.Users
+                    .CountAsync(u => u.PrimaryUserType == UserType.Coach && u.CreatedAt >= startOfMonth);
 
             // Total payments
             var totalRevenue = await _dbContext.Payments
@@ -649,7 +686,9 @@ namespace Maranny.API.Controllers
                     Total = totalUsers,
                     Clients = totalClients,
                     Coaches = totalCoaches,
-                    NewThisMonth = newUsersThisMonth
+                    NewThisMonth = newUsersThisMonth,
+                    NewClientsThisMonth = newClientsThisMonth,
+                    NewCoachesThisMonth = newCoachesThisMonth
                 },
                 Coaches = new
                 {
@@ -675,6 +714,8 @@ namespace Maranny.API.Controllers
                 MonthlyGrowth = new
                 {
                     NewUsers = newUsersThisMonth,
+                    NewClients = newClientsThisMonth,
+                    NewCoaches = newCoachesThisMonth,
                     Month = DateTime.UtcNow.ToString("MMMM yyyy")
                 },
                 RevenueAnalytics = new
