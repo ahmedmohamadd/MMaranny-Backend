@@ -110,22 +110,40 @@ namespace Maranny.API.Controllers
         [HttpGet("coaches/pending")]
         public async Task<IActionResult> GetPendingCoaches()
         {
-            var pendingCoaches = await _dbContext.Coaches
+            var pendingCoachEntities = await _dbContext.Coaches
                 .Include(c => c.User)
+                .Include(c => c.CoachSports)
                 .Where(c => c.VerificationStatus == VerificationStatus.Pending)
-                .Select(c => new
-                {
-                    c.CoachID,
-                    c.F_name,
-                    c.L_name,
-                    c.Bio,
-                    c.ExperienceYears,
-                    c.CertificateUrl,
-                    Email = c.User.Email,
-                    PhoneNumber = c.User.PhoneNumber,
-                    CreatedAt = c.User.CreatedAt
-                })
                 .ToListAsync();
+
+            var pendingCoaches = pendingCoachEntities
+                .Select(c =>
+                {
+                    var experienceYears = c.ExperienceYears.GetValueOrDefault();
+                    if (experienceYears <= 0)
+                    {
+                        experienceYears = c.CoachSports
+                            .Select(cs => cs.ExperienceYears.GetValueOrDefault())
+                            .DefaultIfEmpty(0)
+                            .Max();
+                    }
+
+                    return new
+                    {
+                        c.CoachID,
+                        c.F_name,
+                        c.L_name,
+                        c.Bio,
+                        ExperienceYears = experienceYears,
+                        c.CertificateUrl,
+                        Email = c.User.Email,
+                        PhoneNumber = string.IsNullOrWhiteSpace(c.User.PhoneNumber)
+                            ? null
+                            : c.User.PhoneNumber.Trim(),
+                        CreatedAt = c.User.CreatedAt
+                    };
+                })
+                .ToList();
 
             return Ok(pendingCoaches);
         }
@@ -494,23 +512,41 @@ namespace Maranny.API.Controllers
         [HttpGet("certificates/pending")]
         public async Task<IActionResult> GetPendingCertificates()
         {
-            var pendingCertificates = await _dbContext.Coaches
+            var pendingCertificateEntities = await _dbContext.Coaches
                 .Include(c => c.User)
+                .Include(c => c.CoachSports)
                 .Where(c => c.VerificationStatus == VerificationStatus.Pending &&
                             !string.IsNullOrEmpty(c.CertificateUrl))
-                .Select(c => new
-                {
-                    c.CoachID,
-                    c.F_name,
-                    c.L_name,
-                    c.Bio,
-                    c.ExperienceYears,
-                    c.CertificateUrl,
-                    Email = c.User.Email,
-                    PhoneNumber = c.User.PhoneNumber,
-                    CreatedAt = c.User.CreatedAt
-                })
                 .ToListAsync();
+
+            var pendingCertificates = pendingCertificateEntities
+                .Select(c =>
+                {
+                    var experienceYears = c.ExperienceYears.GetValueOrDefault();
+                    if (experienceYears <= 0)
+                    {
+                        experienceYears = c.CoachSports
+                            .Select(cs => cs.ExperienceYears.GetValueOrDefault())
+                            .DefaultIfEmpty(0)
+                            .Max();
+                    }
+
+                    return new
+                    {
+                        c.CoachID,
+                        c.F_name,
+                        c.L_name,
+                        c.Bio,
+                        ExperienceYears = experienceYears,
+                        c.CertificateUrl,
+                        Email = c.User.Email,
+                        PhoneNumber = string.IsNullOrWhiteSpace(c.User.PhoneNumber)
+                            ? null
+                            : c.User.PhoneNumber.Trim(),
+                        CreatedAt = c.User.CreatedAt
+                    };
+                })
+                .ToList();
 
             return Ok(pendingCertificates);
         }
