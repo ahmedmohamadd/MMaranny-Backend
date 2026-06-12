@@ -675,7 +675,7 @@ namespace Maranny.Infrastructure.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("CoachSportID"));
 
-                    b.Property<int>("CoachID")
+                    b.Property<int?>("CoachID")
                         .HasColumnType("int");
 
                     b.Property<string>("Description")
@@ -1018,7 +1018,7 @@ namespace Maranny.Infrastructure.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
-                    b.Property<int>("ProductID")
+                    b.Property<int?>("ProductID")
                         .HasColumnType("int");
 
                     b.Property<string>("Reason")

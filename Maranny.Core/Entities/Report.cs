@@ -14,11 +14,9 @@ namespace Maranny.Core.Entities
         [Key]
         public int ReportID { get; set; }
 
-        [Required]
-        public int ProductID { get; set; }
+        public int? ProductID { get; set; }
 
-        [Required]
-        public int CoachID { get; set; }
+        public int? CoachID { get; set; }
 
         [MaxLength(2000)]
         public string? Description { get; set; }
@@ -41,10 +39,10 @@ namespace Maranny.Core.Entities
 
         // Navigation Properties
         [ForeignKey(nameof(ProductID))]
-        public virtual Product Product { get; set; } = null!;
+        public virtual Product? Product { get; set; }
 
         [ForeignKey(nameof(CoachID))]
-        public virtual Coach Coach { get; set; } = null!;
+        public virtual Coach? Coach { get; set; }
 
         public virtual ICollection<ClientReport> ClientReports { get; set; } = new List<ClientReport>();
         public virtual ICollection<AdminReport> AdminReports { get; set; } = new List<AdminReport>();
