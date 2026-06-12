@@ -787,6 +787,31 @@ namespace Maranny.API.Controllers
                 .OrderByDescending(r => r.CreatedAt);
 
             var totalCount = await query.CountAsync();
+            var averageRating = await _dbContext.Reviews
+                .AverageAsync(r => (decimal?)r.Rating) ?? 0;
+            var ratingCounts = await _dbContext.Reviews
+                .GroupBy(r => r.Rating)
+                .Select(g => new
+                {
+                    Rating = g.Key,
+                    Count = g.Count()
+                })
+                .ToListAsync();
+            var ratingBreakdown = Enumerable.Range(1, 5)
+                .Select(rating =>
+                {
+                    var count = ratingCounts.FirstOrDefault(r => r.Rating == rating)?.Count ?? 0;
+                    return new
+                    {
+                        rating,
+                        count,
+                        percentage = totalCount == 0
+                            ? 0
+                            : Math.Round(count * 100m / totalCount, 1)
+                    };
+                })
+                .OrderByDescending(r => r.rating)
+                .ToList();
 
             var reviews = await query
                 .Skip((page - 1) * pageSize)
@@ -818,6 +843,12 @@ namespace Maranny.API.Controllers
                 page = page,
                 pageSize = pageSize,
                 totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                summary = new
+                {
+                    totalReviews = totalCount,
+                    averageRating = Math.Round(averageRating, 1),
+                    ratingBreakdown
+                },
                 reviews = reviews
             });
         }
