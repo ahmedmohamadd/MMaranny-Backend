@@ -298,16 +298,53 @@ namespace Maranny.API.Controllers
                 if (!string.IsNullOrEmpty(role) && !roles.Contains(role))
                     continue;
 
+                object? coachStats = null;
+                if (user.Coach != null)
+                {
+                    var coachId = user.Coach.CoachID;
+                    var sessionCount = await _dbContext.Bookings
+                        .CountAsync(b => b.TrainingSession.CoachID == coachId &&
+                                         b.Status != BookingStatus.Cancelled);
+                    var rating = await _dbContext.Reviews
+                        .Where(r => r.CoachID == coachId)
+                        .AverageAsync(r => (decimal?)r.Rating) ?? user.Coach.AvgRating ?? 0;
+                    var revenue = await _dbContext.Payments
+                        .Where(p => p.Status == PaymentStatus.Completed &&
+                                    p.TrainingSession.CoachID == coachId)
+                        .SumAsync(p => (decimal?)p.Amount) ?? 0;
+                    var primarySport = await _dbContext.CoachSports
+                        .Where(cs => cs.CoachID == coachId)
+                        .OrderBy(cs => cs.CoachSportID)
+                        .Select(cs => cs.Sport.Name)
+                        .FirstOrDefaultAsync();
+
+                    coachStats = new
+                    {
+                        coachId,
+                        sport = primarySport ?? "-",
+                        sessions = sessionCount,
+                        rating = Math.Round(rating, 1),
+                        revenue
+                    };
+                }
+
                 userList.Add(new
                 {
                     id = user.Id,
                     email = user.Email,
-                    name = user.Client?.F_name ?? user.Coach?.F_name ?? user.Admin?.F_name ?? "",
+                    name = user.Client != null
+                        ? (user.Client.F_name + " " + user.Client.L_name).Trim()
+                        : user.Coach != null
+                            ? (user.Coach.F_name + " " + user.Coach.L_name).Trim()
+                            : user.Admin != null
+                                ? (user.Admin.F_name + " " + user.Admin.L_name).Trim()
+                                : "",
                     primaryUserType = user.PrimaryUserType.ToString(),
                     roles,
                     isBlocked = user.IsBlocked,
                     emailConfirmed = user.EmailConfirmed,
-                    createdAt = user.CreatedAt
+                    createdAt = user.CreatedAt,
+                    coachStats
                 });
             }
 
@@ -324,6 +361,60 @@ namespace Maranny.API.Controllers
                 pageSize = pageSize,
                 totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
                 users = pagedUsers
+            });
+        }
+
+        [HttpGet("coaches/top")]
+        public async Task<IActionResult> GetTopCoachesBySessions([FromQuery] int limit = 5)
+        {
+            limit = Math.Clamp(limit, 1, 50);
+
+            var coaches = await _dbContext.Coaches
+                .Include(c => c.User)
+                .Include(c => c.CoachSports)
+                    .ThenInclude(cs => cs.Sport)
+                .ToListAsync();
+
+            var rows = new List<TopCoachStatsRow>();
+            foreach (var coach in coaches)
+            {
+                var sessionCount = await _dbContext.Bookings
+                    .CountAsync(b => b.TrainingSession.CoachID == coach.CoachID &&
+                                     b.Status != BookingStatus.Cancelled);
+                var rating = await _dbContext.Reviews
+                    .Where(r => r.CoachID == coach.CoachID)
+                    .AverageAsync(r => (decimal?)r.Rating) ?? coach.AvgRating ?? 0;
+                var revenue = await _dbContext.Payments
+                    .Where(p => p.Status == PaymentStatus.Completed &&
+                                p.TrainingSession.CoachID == coach.CoachID)
+                    .SumAsync(p => (decimal?)p.Amount) ?? 0;
+                var sport = coach.CoachSports
+                    .OrderBy(cs => cs.CoachSportID)
+                    .Select(cs => cs.Sport.Name)
+                    .FirstOrDefault();
+
+                rows.Add(new TopCoachStatsRow
+                {
+                    Id = coach.UserId,
+                    CoachId = coach.CoachID,
+                    Email = coach.User.Email,
+                    Name = (coach.F_name + " " + coach.L_name).Trim(),
+                    PrimaryUserType = UserType.Coach.ToString(),
+                    IsBlocked = coach.User.IsBlocked,
+                    Sport = sport ?? "-",
+                    Sessions = sessionCount,
+                    Rating = Math.Round(rating, 1),
+                    Revenue = revenue
+                });
+            }
+
+            return Ok(new
+            {
+                coaches = rows
+                    .OrderByDescending(row => row.Sessions)
+                    .ThenByDescending(row => row.Rating)
+                    .Take(limit)
+                    .ToList()
             });
         }
 
@@ -743,6 +834,20 @@ namespace Maranny.API.Controllers
 
             coach.AvgRating = averageRating ?? 0;
             await _dbContext.SaveChangesAsync();
+        }
+
+        private sealed class TopCoachStatsRow
+        {
+            public int Id { get; set; }
+            public int CoachId { get; set; }
+            public string? Email { get; set; }
+            public string Name { get; set; } = string.Empty;
+            public string PrimaryUserType { get; set; } = string.Empty;
+            public bool IsBlocked { get; set; }
+            public string Sport { get; set; } = "-";
+            public int Sessions { get; set; }
+            public decimal Rating { get; set; }
+            public decimal Revenue { get; set; }
         }
 
     }
