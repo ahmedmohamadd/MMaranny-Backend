@@ -548,6 +548,10 @@ namespace Maranny.API.Controllers
         [HttpGet("analytics")]
         public async Task<IActionResult> GetAnalytics()
         {
+            var now = DateTime.UtcNow;
+            var startOfYear = new DateTime(now.Year, 1, 1);
+            var startOfNextYear = startOfYear.AddYears(1);
+
             // Total users
             var totalUsers = await _dbContext.Users.CountAsync();
 
@@ -584,6 +588,60 @@ namespace Maranny.API.Controllers
                 .Where(p => p.Status == PaymentStatus.Completed)
                 .SumAsync(p => (decimal?)p.Amount) ?? 0;
 
+            var monthlyBookingsRaw = await _dbContext.Bookings
+                .Where(b => b.BookingDate >= startOfYear && b.BookingDate < startOfNextYear)
+                .GroupBy(b => b.BookingDate.Month)
+                .Select(g => new
+                {
+                    Month = g.Key,
+                    Count = g.Count()
+                })
+                .ToListAsync();
+
+            var monthlyRevenueRaw = await _dbContext.Payments
+                .Where(p => p.Status == PaymentStatus.Completed &&
+                            p.TransactionDate >= startOfYear &&
+                            p.TransactionDate < startOfNextYear)
+                .GroupBy(p => p.TransactionDate.Month)
+                .Select(g => new
+                {
+                    Month = g.Key,
+                    Revenue = g.Sum(p => p.Amount)
+                })
+                .ToListAsync();
+
+            var monthlyBookings = Enumerable.Range(1, 12)
+                .Select(month => new
+                {
+                    Month = month,
+                    MonthName = new DateTime(now.Year, month, 1).ToString("MMM"),
+                    Count = monthlyBookingsRaw.FirstOrDefault(x => x.Month == month)?.Count ?? 0
+                })
+                .ToList();
+
+            var monthlyRevenue = Enumerable.Range(1, 12)
+                .Select(month => new
+                {
+                    Month = month,
+                    MonthName = new DateTime(now.Year, month, 1).ToString("MMM"),
+                    Revenue = monthlyRevenueRaw.FirstOrDefault(x => x.Month == month)?.Revenue ?? 0
+                })
+                .ToList();
+
+            var bestRevenueMonth = monthlyRevenue
+                .Where(x => x.Revenue > 0)
+                .OrderByDescending(x => x.Revenue)
+                .FirstOrDefault();
+
+            var currentMonthRevenue = monthlyRevenue
+                .FirstOrDefault(x => x.Month == now.Month)?.Revenue ?? 0;
+            var previousMonthRevenue = now.Month > 1
+                ? monthlyRevenue.FirstOrDefault(x => x.Month == now.Month - 1)?.Revenue ?? 0
+                : 0;
+            var revenueGrowthPercent = previousMonthRevenue > 0
+                ? Math.Round(((currentMonthRevenue - previousMonthRevenue) / previousMonthRevenue) * 100, 1)
+                : currentMonthRevenue > 0 ? 100 : 0;
+
             return Ok(new
             {
                 Users = new
@@ -618,6 +676,16 @@ namespace Maranny.API.Controllers
                 {
                     NewUsers = newUsersThisMonth,
                     Month = DateTime.UtcNow.ToString("MMMM yyyy")
+                },
+                RevenueAnalytics = new
+                {
+                    Year = now.Year,
+                    TotalRevenue = totalRevenue,
+                    TotalSessions = totalBookings,
+                    BestMonth = bestRevenueMonth?.MonthName ?? "-",
+                    GrowthPercent = revenueGrowthPercent,
+                    MonthlyRevenue = monthlyRevenue,
+                    MonthlyBookings = monthlyBookings
                 }
             });
         }
