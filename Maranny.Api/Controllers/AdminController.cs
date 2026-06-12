@@ -449,6 +449,7 @@ namespace Maranny.API.Controllers
                 .Include(b => b.Client)
                 .Include(b => b.TrainingSession)
                     .ThenInclude(s => s.Coach)
+                        .ThenInclude(c => c.CoachSports)
                 .Include(b => b.TrainingSession)
                     .ThenInclude(s => s.Sport)
                 .Include(b => b.TrainingSession)
@@ -474,7 +475,10 @@ namespace Maranny.API.Controllers
                     status = b.Status.ToString(),
                     amount = b.TrainingSession.Payment != null
                         ? b.TrainingSession.Payment.Amount
-                        : 0,
+                        : b.TrainingSession.Coach.CoachSports
+                            .Where(cs => cs.SportID == b.TrainingSession.SportID)
+                            .Select(cs => cs.PricePerSession)
+                            .FirstOrDefault() ?? 0,
                     client = new
                     {
                         clientId = b.Client.ClientID,
