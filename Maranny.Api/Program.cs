@@ -212,41 +212,94 @@ namespace Maranny.Api
                 }
             }
 
-            // Seed default Admin user
-            var adminEmail = "admin@maranny.com";
-            var adminUser = await userManager.FindByEmailAsync(adminEmail);
-
-            if (adminUser == null)
+            var defaultAdmins = new[]
             {
-                adminUser = new ApplicationUser
+                new
                 {
-                    Email = adminEmail,
-                    UserName = adminEmail,
-                    EmailConfirmed = true,
-                    PrimaryUserType = UserType.Admin,
-                    CreatedAt = DateTime.UtcNow
-                };
+                    Email = "admin@maranny.com",
+                    Password = "Admin@123456",
+                    FirstName = "System",
+                    LastName = "Admin",
+                    Username = "admin"
+                },
+                new
+                {
+                    Email = "admin1@maranny.com",
+                    Password = "Admin@123456",
+                    FirstName = "Maranny",
+                    LastName = "Admin One",
+                    Username = "admin1"
+                },
+                new
+                {
+                    Email = "admin2@maranny.com",
+                    Password = "Admin@123456",
+                    FirstName = "Maranny",
+                    LastName = "Admin Two",
+                    Username = "admin2"
+                }
+            };
 
-                var result = await userManager.CreateAsync(adminUser, "Admin@123456");
+            foreach (var seedAdmin in defaultAdmins)
+            {
+                var adminUser = await userManager.FindByEmailAsync(seedAdmin.Email);
 
-                if (result.Succeeded)
+                if (adminUser == null)
+                {
+                    adminUser = new ApplicationUser
+                    {
+                        Email = seedAdmin.Email,
+                        UserName = seedAdmin.Email,
+                        EmailConfirmed = true,
+                        PhoneNumberConfirmed = true,
+                        PrimaryUserType = UserType.Admin,
+                        LockoutEnabled = true,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    var result = await userManager.CreateAsync(adminUser, seedAdmin.Password);
+                    if (!result.Succeeded)
+                    {
+                        continue;
+                    }
+                }
+
+                adminUser.EmailConfirmed = true;
+                adminUser.PhoneNumberConfirmed = true;
+                adminUser.PrimaryUserType = UserType.Admin;
+                adminUser.LockoutEnabled = true;
+                await userManager.UpdateAsync(adminUser);
+
+                if (!await userManager.IsInRoleAsync(adminUser, "Admin"))
                 {
                     await userManager.AddToRoleAsync(adminUser, "Admin");
+                }
 
-                    // Create Admin profile
-                    var admin = new Admin
+                var adminProfile = await dbContext.Admins
+                    .FirstOrDefaultAsync(a => a.UserId == adminUser.Id);
+
+                if (adminProfile == null)
+                {
+                    dbContext.Admins.Add(new Admin
                     {
                         UserId = adminUser.Id,
-                        F_name = "System",
-                        L_name = "Admin",
-                        Email = adminEmail,
-                        Password = "", // Not used
-                        Username = "admin"
-                    };
-                    dbContext.Admins.Add(admin);
-                    await dbContext.SaveChangesAsync();
+                        F_name = seedAdmin.FirstName,
+                        L_name = seedAdmin.LastName,
+                        Email = seedAdmin.Email,
+                        Password = "",
+                        Username = seedAdmin.Username
+                    });
+                }
+                else
+                {
+                    adminProfile.F_name = seedAdmin.FirstName;
+                    adminProfile.L_name = seedAdmin.LastName;
+                    adminProfile.Email = seedAdmin.Email;
+                    adminProfile.Username = seedAdmin.Username;
                 }
             }
+
+            await dbContext.SaveChangesAsync();
         }
 
     }
