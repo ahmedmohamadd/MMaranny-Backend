@@ -17,6 +17,8 @@ namespace Maranny.API.Controllers
     [Route("api/auth")]
     public class AuthController : ControllerBase
     {
+        private const int MaxFailedLoginAttempts = 5;
+
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly ApplicationDbContext _dbContext;
         private readonly IJwtService _jwtService;
@@ -81,7 +83,8 @@ namespace Maranny.API.Controllers
                 UserName = dto.Email,
                 PhoneNumber = dto.PhoneNumber,
                 PrimaryUserType = isCoach ? UserType.Coach : UserType.Client,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                LockoutEnabled = true
             };
 
             var result = await _userManager.CreateAsync(user, dto.Password);
@@ -330,7 +333,7 @@ namespace Maranny.API.Controllers
                 }
 
                 var failedAttempts = await _userManager.GetAccessFailedCountAsync(user);
-                var attemptsRemaining = Math.Max(0, 5 - failedAttempts);
+                var attemptsRemaining = Math.Max(0, MaxFailedLoginAttempts - failedAttempts);
 
                 return Unauthorized(new
                 {

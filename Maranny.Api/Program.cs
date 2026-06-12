@@ -55,6 +55,7 @@ namespace Maranny.Api
                 options.User.RequireUniqueEmail = true;
 
                 // Lockout settings
+                options.Lockout.AllowedForNewUsers = true;
                 options.Lockout.MaxFailedAccessAttempts = 5;
                 options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
             })
