@@ -512,6 +512,177 @@ namespace Maranny.API.Controllers
             });
         }
 
+        [HttpGet("marketplace")]
+        public async Task<IActionResult> GetMarketplaceListings(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 100,
+            [FromQuery] string? category = null)
+        {
+            page = Math.Max(page, 1);
+            pageSize = Math.Clamp(pageSize, 1, 200);
+
+            var query = _dbContext.Products
+                .Include(p => p.Client)
+                    .ThenInclude(c => c.User)
+                .Include(p => p.Category)
+                .Include(p => p.AdminProducts)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(category) &&
+                !category.Equals("All", StringComparison.OrdinalIgnoreCase) &&
+                !category.Equals("Used", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(p => p.Category.CategoryName == category);
+            }
+
+            if (category?.Equals("Used", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                query = query.Where(p => p.Condition != null && p.Condition.Contains("Used"));
+            }
+
+            var now = DateTime.UtcNow;
+            var weekStart = now.AddDays(-7);
+            var allProductsQuery = _dbContext.Products.AsQueryable();
+            var totalCount = await query.CountAsync();
+
+            var products = await query
+                .OrderByDescending(p => p.CreatedAt)
+                .ThenByDescending(p => p.ProductID)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(p => new
+                {
+                    id = p.ProductID,
+                    productId = p.ProductID,
+                    productName = p.ProductName,
+                    seller = new
+                    {
+                        id = p.Client.UserId,
+                        clientId = p.ClientID,
+                        name = (p.Client.F_name + " " + p.Client.L_name).Trim(),
+                        email = p.Client.User.Email
+                    },
+                    sellerName = (p.Client.F_name + " " + p.Client.L_name).Trim(),
+                    categoryId = p.CategoryID,
+                    category = p.Category.CategoryName,
+                    categoryName = p.Category.CategoryName,
+                    condition = p.Condition,
+                    price = p.Price,
+                    createdAt = p.CreatedAt,
+                    location = p.ListingLocation,
+                    isFlagged = p.AdminProducts.Any()
+                })
+                .ToListAsync();
+
+            var categories = await _dbContext.Categories
+                .OrderBy(c => c.CategoryID)
+                .Select(c => new
+                {
+                    id = c.CategoryID,
+                    name = c.CategoryName,
+                    productCount = c.Products.Count
+                })
+                .ToListAsync();
+
+            var flaggedCount = await _dbContext.Products
+                .CountAsync(p => p.AdminProducts.Any());
+            var listedThisWeek = await allProductsQuery
+                .CountAsync(p => p.CreatedAt >= weekStart);
+            var activeSellers = await allProductsQuery
+                .Select(p => p.Client.UserId)
+                .Distinct()
+                .CountAsync();
+
+            return Ok(new
+            {
+                totalCount,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                stats = new
+                {
+                    totalListings = await allProductsQuery.CountAsync(),
+                    listedThisWeek,
+                    flagged = flaggedCount,
+                    activeSellers
+                },
+                categories,
+                products,
+                items = products
+            });
+        }
+
+        [HttpPost("marketplace/{productId:int}/flag")]
+        public async Task<IActionResult> FlagMarketplaceListing(int productId)
+        {
+            var admin = await GetCurrentAdminAsync();
+            if (admin == null)
+            {
+                return Unauthorized(new { error = "Admin profile not found" });
+            }
+
+            var productExists = await _dbContext.Products.AnyAsync(p => p.ProductID == productId);
+            if (!productExists)
+            {
+                return NotFound(new { error = "Product not found" });
+            }
+
+            var alreadyFlagged = await _dbContext.AdminProducts
+                .AnyAsync(ap => ap.AdminID == admin.AdminID && ap.ProductID == productId);
+            if (!alreadyFlagged)
+            {
+                _dbContext.AdminProducts.Add(new AdminProduct
+                {
+                    AdminID = admin.AdminID,
+                    ProductID = productId
+                });
+                await _dbContext.SaveChangesAsync();
+            }
+
+            return Ok(new { message = "Listing flagged", productId, isFlagged = true });
+        }
+
+        [HttpDelete("marketplace/{productId:int}/flag")]
+        public async Task<IActionResult> UnflagMarketplaceListing(int productId)
+        {
+            var flags = await _dbContext.AdminProducts
+                .Where(ap => ap.ProductID == productId)
+                .ToListAsync();
+            if (flags.Count == 0)
+            {
+                return Ok(new { message = "Listing was not flagged", productId, isFlagged = false });
+            }
+
+            _dbContext.AdminProducts.RemoveRange(flags);
+            await _dbContext.SaveChangesAsync();
+            return Ok(new { message = "Listing unflagged", productId, isFlagged = false });
+        }
+
+        [HttpDelete("marketplace/{productId:int}")]
+        public async Task<IActionResult> RemoveMarketplaceListing(int productId)
+        {
+            var product = await _dbContext.Products
+                .FirstOrDefaultAsync(p => p.ProductID == productId);
+            if (product == null)
+            {
+                return NotFound(new { error = "Product not found" });
+            }
+
+            var sportProducts = await _dbContext.SportProducts
+                .Where(sp => sp.ProductID == productId)
+                .ToListAsync();
+            var adminProducts = await _dbContext.AdminProducts
+                .Where(ap => ap.ProductID == productId)
+                .ToListAsync();
+
+            _dbContext.SportProducts.RemoveRange(sportProducts);
+            _dbContext.AdminProducts.RemoveRange(adminProducts);
+            _dbContext.Products.Remove(product);
+            await _dbContext.SaveChangesAsync();
+
+            return Ok(new { message = "Listing removed", productId });
+        }
+
         // Get pending certificates (coaches waiting for certificate verification)
         [HttpGet("certificates/pending")]
         public async Task<IActionResult> GetPendingCertificates()
@@ -874,6 +1045,18 @@ namespace Maranny.API.Controllers
 
             coach.AvgRating = averageRating ?? 0;
             await _dbContext.SaveChangesAsync();
+        }
+
+        private async Task<Admin?> GetCurrentAdminAsync()
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdClaim, out var userId))
+            {
+                return null;
+            }
+
+            return await _dbContext.Admins
+                .FirstOrDefaultAsync(a => a.UserId == userId);
         }
 
         private sealed class TopCoachStatsRow
