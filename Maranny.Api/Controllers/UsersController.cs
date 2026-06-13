@@ -288,6 +288,7 @@ namespace Maranny.API.Controllers
                 gender = coach.Gender.HasValue ? coach.Gender.ToString() : null,
                 coach.Age,
                 coach.CertificateUrl,
+                coach.CertificateImageUrl,
                 verificationStatus = coach.VerificationStatus.ToString(),
                 availableDays,
                 availableHours,
@@ -326,7 +327,7 @@ namespace Maranny.API.Controllers
 
             var distinctSportIds = dto.Sports.Select(s => s.SportID).Distinct().ToList();
             var existingSports = await _dbContext.Sports
-                .Where(s => distinctSportIds.Contains(s.Id))
+                .Where(s => distinctSportIds.Contains(s.Id) && s.Name != "Yoga")
                 .Select(s => s.Id)
                 .ToListAsync();
 
@@ -715,6 +716,76 @@ namespace Maranny.API.Controllers
         public class UploadImageDto
         {
             public IFormFile File { get; set; } = null!;
+        }
+
+        [HttpPost("coach/certificate")]
+        [Authorize(Roles = "Coach")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UploadCoachCertificate([FromForm] UploadImageDto dto)
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized();
+            }
+
+            if (dto.File == null || dto.File.Length == 0)
+            {
+                return BadRequest(new { error = "No certificate image provided" });
+            }
+
+            if (dto.File.Length > 5 * 1024 * 1024)
+            {
+                return BadRequest(new { error = "Certificate image size cannot exceed 5MB" });
+            }
+
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif" };
+            var extension = Path.GetExtension(dto.File.FileName).ToLowerInvariant();
+            if (!allowedExtensions.Contains(extension))
+            {
+                return BadRequest(new { error = "Only JPG, PNG, and GIF images are allowed" });
+            }
+
+            try
+            {
+                var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId);
+                if (coach == null)
+                {
+                    return NotFound(new { error = "Coach profile not found" });
+                }
+
+                var uploadsFolder = Path.Combine(
+                    Directory.GetCurrentDirectory(),
+                    "wwwroot",
+                    "uploads",
+                    "certificates");
+                Directory.CreateDirectory(uploadsFolder);
+
+                var fileName = $"{userId}_{Guid.NewGuid()}{extension}";
+                var filePath = Path.Combine(uploadsFolder, fileName);
+
+                using (var stream = new FileStream(filePath, FileMode.Create))
+                {
+                    await dto.File.CopyToAsync(stream);
+                }
+
+                var certificateUrl = $"/uploads/certificates/{fileName}";
+                coach.CertificateUrl = certificateUrl;
+                coach.CertificateImageUrl = certificateUrl;
+
+                await _dbContext.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    message = "Certificate uploaded successfully",
+                    certificateUrl,
+                    certificateImageUrl = certificateUrl
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Failed to upload certificate", details = ex.Message });
+            }
         }
 
     }

@@ -185,7 +185,7 @@ namespace Maranny.API.Controllers
 
             var distinctSportIds = dto.Sports.Select(s => s.SportID).Distinct().ToList();
             var existingSports = await _dbContext.Sports
-                .Where(s => distinctSportIds.Contains(s.Id))
+                .Where(s => distinctSportIds.Contains(s.Id) && s.Name != "Yoga")
                 .Select(s => s.Id)
                 .ToListAsync();
 

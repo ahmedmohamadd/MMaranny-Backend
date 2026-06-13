@@ -72,8 +72,11 @@ namespace Maranny.API.Controllers
             }
 
             var reporterType = GetCurrentUserType();
+            var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId.Value);
             var client = await _dbContext.Clients.FirstOrDefaultAsync(c => c.UserId == userId.Value);
+            var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId.Value);
             var reportedCoach = await ResolveReportedCoach(dto);
+            var reportedClient = await ResolveReportedClient(dto);
 
             var report = new Report
             {
@@ -82,7 +85,7 @@ namespace Maranny.API.Controllers
                 ReporterType = reporterType,
                 ReportedType = dto.ReportedType?.Trim(),
                 Reason = dto.Reason.Trim(),
-                Description = BuildReportDescription(dto, reportedCoach),
+                Description = BuildReportDescription(dto, reportedCoach, reportedClient, user, client, coach),
                 Priority = dto.Priority?.Trim() ?? "Normal",
                 Status = ReportStatus.Pending,
                 CreatedAt = DateTime.UtcNow
@@ -122,8 +125,34 @@ namespace Maranny.API.Controllers
                    "User";
         }
 
+        private async Task<Client?> ResolveReportedClient(SubmitReportDto dto)
+        {
+            if (!string.Equals(dto.ReportedType?.Trim(), "Client", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var target = dto.Target?.Trim();
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                return null;
+            }
+
+            return await _dbContext.Clients
+                .Include(c => c.User)
+                .FirstOrDefaultAsync(c =>
+                    c.User.Email == target ||
+                    (c.F_name + " " + c.L_name).Contains(target));
+        }
+
         private async Task<Coach?> ResolveReportedCoach(SubmitReportDto dto)
         {
+            if (!string.IsNullOrWhiteSpace(dto.ReportedType) &&
+                !string.Equals(dto.ReportedType.Trim(), "Coach", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
             if (dto.CoachId is > 0)
             {
                 return await _dbContext.Coaches.FindAsync(dto.CoachId.Value);
@@ -142,19 +171,41 @@ namespace Maranny.API.Controllers
                     (c.F_name + " " + c.L_name).Contains(target));
         }
 
-        private static string BuildReportDescription(SubmitReportDto dto, Coach? reportedCoach)
+        private static string BuildReportDescription(
+            SubmitReportDto dto,
+            Coach? reportedCoach,
+            Client? reportedClient,
+            ApplicationUser? reporterUser,
+            Client? reporterClient,
+            Coach? reporterCoach)
         {
             var target = string.IsNullOrWhiteSpace(dto.Target)
                 ? "Not specified"
                 : dto.Target.Trim();
-            var resolved = reportedCoach == null
-                ? "Not resolved"
-                : $"{reportedCoach.F_name} {reportedCoach.L_name} (CoachID {reportedCoach.CoachID})";
+            var reporterName = reporterClient != null
+                ? $"{reporterClient.F_name} {reporterClient.L_name}".Trim()
+                : reporterCoach != null
+                    ? $"{reporterCoach.F_name} {reporterCoach.L_name}".Trim()
+                    : reporterUser?.UserName ?? "Unknown reporter";
+            var reporterEmail = reporterUser?.Email ?? "Not provided";
+            var reporterUserId = reporterUser?.Id.ToString() ?? "Unknown";
+            var resolved = reportedCoach != null
+                ? $"{reportedCoach.F_name} {reportedCoach.L_name} (CoachID {reportedCoach.CoachID}, UserID {reportedCoach.UserId})"
+                : reportedClient != null
+                    ? $"{reportedClient.F_name} {reportedClient.L_name} (ClientID {reportedClient.ClientID}, UserID {reportedClient.UserId})"
+                    : "Not resolved";
+            var suggestedBlockUserId = reportedCoach?.UserId ?? reportedClient?.UserId;
             var details = string.IsNullOrWhiteSpace(dto.Description)
                 ? "No extra details provided."
                 : dto.Description.Trim();
 
-            return $"Target entered: {target}\nResolved target: {resolved}\n\n{details}";
+            return
+                $"Reporter: {reporterName} (UserID {reporterUserId})\n" +
+                $"Reporter email: {reporterEmail}\n" +
+                $"Target entered: {target}\n" +
+                $"Resolved target: {resolved}\n" +
+                $"Suggested block user id: {(suggestedBlockUserId.HasValue ? suggestedBlockUserId.Value.ToString() : "Not resolved")}\n\n" +
+                details;
         }
     }
 

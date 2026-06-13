@@ -106,6 +106,121 @@ namespace Maranny.API.Controllers
             return Ok(new { message = "User unblocked successfully" });
         }
 
+        [HttpGet("reports")]
+        public async Task<IActionResult> GetReports(
+            [FromQuery] string? status = null,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50)
+        {
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 1, 100);
+
+            var query = _dbContext.Reports
+                .Include(r => r.Coach)
+                    .ThenInclude(c => c!.User)
+                .Include(r => r.Product)
+                    .ThenInclude(p => p!.Client)
+                        .ThenInclude(c => c.User)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(status) &&
+                Enum.TryParse<ReportStatus>(status.Trim(), true, out var parsedStatus))
+            {
+                query = query.Where(r => r.Status == parsedStatus);
+            }
+
+            var totalCount = await query.CountAsync();
+            var reportEntities = await query
+                .OrderByDescending(r => r.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            var reports = reportEntities.Select(report =>
+            {
+                var suggestedBlockUserId =
+                    report.Coach?.UserId ??
+                    report.Product?.Client.UserId ??
+                    ExtractSuggestedBlockUserId(report.Description);
+                var targetName = report.Coach != null
+                    ? $"{report.Coach.F_name} {report.Coach.L_name}".Trim()
+                    : report.Product != null
+                        ? report.Product.ProductName
+                        : ExtractLineValue(report.Description, "Target entered");
+
+                return new
+                {
+                    report.ReportID,
+                    report.ProductID,
+                    report.CoachID,
+                    report.ReporterType,
+                    report.ReportedType,
+                    report.Reason,
+                    report.Description,
+                    report.Priority,
+                    status = report.Status.ToString(),
+                    report.CreatedAt,
+                    target = new
+                    {
+                        name = string.IsNullOrWhiteSpace(targetName) ? "Not resolved" : targetName,
+                        coachId = report.CoachID,
+                        productId = report.ProductID,
+                        suggestedBlockUserId,
+                        email = report.Coach?.User.Email ?? report.Product?.Client.User.Email
+                    },
+                    reporter = new
+                    {
+                        name = ExtractReporterName(report.Description),
+                        email = ExtractLineValue(report.Description, "Reporter email")
+                    }
+                };
+            }).ToList();
+
+            var summary = await _dbContext.Reports
+                .GroupBy(r => r.Status)
+                .Select(g => new { status = g.Key.ToString(), count = g.Count() })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                totalCount,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                summary,
+                reports
+            });
+        }
+
+        [HttpPut("reports/{reportId:int}/status")]
+        public async Task<IActionResult> UpdateReportStatus(int reportId, [FromBody] UpdateReportStatusDto dto)
+        {
+            var report = await _dbContext.Reports.FirstOrDefaultAsync(r => r.ReportID == reportId);
+            if (report == null)
+            {
+                return NotFound(new { error = "Report not found" });
+            }
+
+            if (!Enum.TryParse<ReportStatus>(dto.Status?.Trim(), true, out var status))
+            {
+                return BadRequest(new { error = "Invalid report status" });
+            }
+
+            report.Status = status;
+            if (!string.IsNullOrWhiteSpace(dto.Notes))
+            {
+                report.Description = $"{report.Description?.Trim()}\n\nAdmin note: {dto.Notes.Trim()}";
+            }
+
+            await _dbContext.SaveChangesAsync();
+            return Ok(new
+            {
+                message = "Report status updated",
+                reportId = report.ReportID,
+                status = report.Status.ToString()
+            });
+        }
+
         // Get list of pending coach verifications
         [HttpGet("coaches/pending")]
         public async Task<IActionResult> GetPendingCoaches()
@@ -1088,6 +1203,44 @@ namespace Maranny.API.Controllers
 
             return await _dbContext.Admins
                 .FirstOrDefaultAsync(a => a.UserId == userId);
+        }
+
+        private static int? ExtractSuggestedBlockUserId(string? description)
+        {
+            var raw = ExtractLineValue(description, "Suggested block user id");
+            return int.TryParse(raw, out var userId) ? userId : null;
+        }
+
+        private static string? ExtractReporterName(string? description)
+        {
+            var reporter = ExtractLineValue(description, "Reporter");
+            if (string.IsNullOrWhiteSpace(reporter))
+            {
+                return null;
+            }
+
+            var userIdIndex = reporter.IndexOf("(UserID", StringComparison.OrdinalIgnoreCase);
+            return userIdIndex > 0 ? reporter[..userIdIndex].Trim() : reporter.Trim();
+        }
+
+        private static string? ExtractLineValue(string? description, string label)
+        {
+            if (string.IsNullOrWhiteSpace(description))
+            {
+                return null;
+            }
+
+            var prefix = $"{label}:";
+            var line = description
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(value => value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+            return line == null ? null : line[prefix.Length..].Trim();
+        }
+
+        public sealed class UpdateReportStatusDto
+        {
+            public string? Status { get; set; }
+            public string? Notes { get; set; }
         }
 
         private sealed class TopCoachStatsRow

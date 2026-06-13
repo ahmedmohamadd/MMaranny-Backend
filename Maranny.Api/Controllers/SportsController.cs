@@ -9,6 +9,7 @@ namespace Maranny.Api.Controllers
     [Route("api/sports")]
     public class SportsController : ControllerBase
     {
+        private static readonly string[] HiddenSportNames = { "Yoga" };
         private readonly ApplicationDbContext _db;
 
         public SportsController(ApplicationDbContext db)
@@ -20,6 +21,7 @@ namespace Maranny.Api.Controllers
         public async Task<IActionResult> GetAll()
         {
             var sports = await _db.Sports
+                .Where(s => !HiddenSportNames.Contains(s.Name))
                 .OrderBy(s => s.Name)
                 .Select(s => new { s.Id, s.Name })
                 .ToListAsync();
@@ -32,6 +34,8 @@ namespace Maranny.Api.Controllers
         {
             if (string.IsNullOrWhiteSpace(dto.Name))
                 return BadRequest(new { error = "Sport name is required" });
+            if (HiddenSportNames.Contains(dto.Name.Trim(), StringComparer.OrdinalIgnoreCase))
+                return BadRequest(new { error = "This sport is no longer supported" });
             {
                 var sport = new Sport
                 {
