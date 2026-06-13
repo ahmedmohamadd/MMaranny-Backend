@@ -7,7 +7,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.WebUtilities;
 using System.Security.Claims;
+using System.Text;
 using Google.Apis.Auth;
 using System.Text.Json;
 
@@ -760,20 +762,21 @@ namespace Maranny.API.Controllers
         public async Task<IActionResult> ConfirmEmail(int userId, string token)
         {
             if (string.IsNullOrEmpty(token))
-                return BadRequest(new { error = "Invalid confirmation token" });
+                return Content(BuildEmailConfirmationPage("Invalid Link", "The email confirmation link is missing its token.", false), "text/html", Encoding.UTF8);
 
             var user = await _userManager.FindByIdAsync(userId.ToString());
             if (user == null)
-                return NotFound(new { error = "User not found" });
+                return Content(BuildEmailConfirmationPage("Account Not Found", "We could not find an account for this confirmation link.", false), "text/html", Encoding.UTF8);
 
             if (user.EmailConfirmed)
-                return Ok(new { message = "Email already confirmed" });
+                return Content(BuildEmailConfirmationPage("Email Already Confirmed", "Your email is already confirmed. You can open Maranny and log in.", true), "text/html", Encoding.UTF8);
 
-            var result = await _userManager.ConfirmEmailAsync(user, token);
+            var decodedToken = DecodeEmailConfirmationToken(token);
+            var result = await _userManager.ConfirmEmailAsync(user, decodedToken);
             if (!result.Succeeded)
-                return BadRequest(new { error = "Email confirmation failed", details = result.Errors.Select(e => e.Description) });
+                return Content(BuildEmailConfirmationPage("Confirmation Failed", "This confirmation link is invalid or expired. Please request a new confirmation email from Maranny.", false), "text/html", Encoding.UTF8);
 
-            return Ok(new { message = "Email confirmed successfully! You can now login." });
+            return Content(BuildEmailConfirmationPage("Email Confirmed", "Your Maranny account is ready. You can now return to the app and log in.", true), "text/html", Encoding.UTF8);
         }
 
         // ─────────────────────────────────────────────────────────────
@@ -957,9 +960,53 @@ namespace Maranny.API.Controllers
             var baseUrl = string.IsNullOrWhiteSpace(configuredBaseUrl)
                 ? $"{Request.Scheme}://{Request.Host}"
                 : configuredBaseUrl.TrimEnd('/');
+            var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(confirmationToken));
 
             return $"{baseUrl}/api/auth/confirm-email" +
-                   $"?userId={userId}&token={Uri.EscapeDataString(confirmationToken)}";
+                   $"?userId={userId}&token={encodedToken}";
+        }
+
+        private static string DecodeEmailConfirmationToken(string token)
+        {
+            try
+            {
+                return Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(token));
+            }
+            catch (FormatException)
+            {
+                return token;
+            }
+        }
+
+        private static string BuildEmailConfirmationPage(string title, string message, bool success)
+        {
+            var color = success ? "#1f9d55" : "#dc2626";
+            var icon = success ? "OK" : "!";
+
+            return $$"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}} - Maranny</title>
+  <style>
+    body { margin:0; min-height:100vh; display:grid; place-items:center; font-family:Arial,sans-serif; background:#eef4ff; color:#13214a; }
+    main { width:min(92vw,460px); background:#fff; border-radius:18px; padding:34px 28px; text-align:center; box-shadow:0 18px 45px rgba(18,33,74,.16); }
+    .mark { width:68px; height:68px; margin:0 auto 18px; border-radius:999px; display:grid; place-items:center; background:{{color}}; color:#fff; font-size:28px; font-weight:700; }
+    h1 { margin:0 0 12px; font-size:28px; }
+    p { margin:0; color:#56617f; line-height:1.55; font-size:16px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">{{icon}}</div>
+    <h1>{{title}}</h1>
+    <p>{{message}}</p>
+  </main>
+</body>
+</html>
+""";
         }
 
         private async Task<CoachOnboardingState> BuildCoachOnboardingStateAsync(Coach coach)
