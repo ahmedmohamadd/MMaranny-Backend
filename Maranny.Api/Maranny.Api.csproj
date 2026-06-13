@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>920ae1eb-d92b-4625-a487-9ecc9f918bb9</UserSecretsId>
+    <AspNetCoreHostingModel>OutOfProcess</AspNetCoreHostingModel>
+    <EnableAspNetCoreModuleStdoutLog>true</EnableAspNetCoreModuleStdoutLog>
   </PropertyGroup>
 
   <ItemGroup>

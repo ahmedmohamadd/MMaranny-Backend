@@ -19,7 +19,11 @@ namespace Maranny.Api
             // ===== DATABASE =====
             builder.Services.AddDbContext<ApplicationDbContext>(options =>
                 options.UseSqlServer(
-                    builder.Configuration.GetConnectionString("DefaultConnection")
+                    builder.Configuration.GetConnectionString("DefaultConnection"),
+                    sqlOptions => sqlOptions.EnableRetryOnFailure(
+                        maxRetryCount: 5,
+                        maxRetryDelay: TimeSpan.FromSeconds(10),
+                        errorNumbersToAdd: null)
                 )
             );
 
@@ -66,7 +70,7 @@ namespace Maranny.Api
             var jwtSettings = builder.Configuration.GetSection("JwtSettings");
             var secretKey = jwtSettings["SecretKey"]!;
 
-            builder.Services.AddAuthentication(options =>
+            var authenticationBuilder = builder.Services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
                 options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -86,13 +90,19 @@ namespace Maranny.Api
                     ),
                     ClockSkew = TimeSpan.Zero
                 };
-            })
-            .AddGoogle(options =>
-            {
-                options.ClientId = builder.Configuration["GoogleAuth:ClientId"]!;
-                options.ClientSecret = builder.Configuration["GoogleAuth:ClientSecret"]!;
-                options.CallbackPath = "/signin-google";
             });
+
+            var googleClientId = builder.Configuration["GoogleAuth:ClientId"];
+            var googleClientSecret = builder.Configuration["GoogleAuth:ClientSecret"];
+            if (!string.IsNullOrWhiteSpace(googleClientId) && !string.IsNullOrWhiteSpace(googleClientSecret))
+            {
+                authenticationBuilder.AddGoogle(options =>
+                {
+                    options.ClientId = googleClientId;
+                    options.ClientSecret = googleClientSecret;
+                    options.CallbackPath = "/signin-google";
+                });
+            }
 
             // ===== AUTHORIZATION =====
             builder.Services.AddAuthorization();
@@ -178,11 +188,8 @@ namespace Maranny.Api
             }
 
             // ===== MIDDLEWARE PIPELINE =====
-            if (app.Environment.IsDevelopment())
-            {
-                app.UseSwagger();
-                app.UseSwaggerUI();
-            }
+            app.UseSwagger();
+            app.UseSwaggerUI();
 
             app.UseHttpsRedirection();
             app.UseStaticFiles(); // Enable serving static files from wwwroot
@@ -201,6 +208,12 @@ namespace Maranny.Api
             var roleManager = serviceProvider.GetRequiredService<RoleManager<IdentityRole<int>>>();
             var userManager = serviceProvider.GetRequiredService<UserManager<ApplicationUser>>();
             var dbContext = serviceProvider.GetRequiredService<ApplicationDbContext>();
+
+            await dbContext.Database.ExecuteSqlRawAsync(@"
+IF COL_LENGTH('dbo.Coaches', 'Age') IS NULL
+BEGIN
+    ALTER TABLE dbo.Coaches ADD Age int NULL;
+END");
 
             // Seed Roles
             string[] roles = { "Admin", "Coach", "Client" };
