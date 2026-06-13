@@ -213,6 +213,21 @@ namespace Maranny.Api
 IF COL_LENGTH('dbo.Coaches', 'Age') IS NULL
 BEGIN
     ALTER TABLE dbo.Coaches ADD Age int NULL;
+END
+
+IF COL_LENGTH('dbo.Coaches', 'AvailabilityStatus') IS NOT NULL
+BEGIN
+    ALTER TABLE dbo.Coaches ALTER COLUMN AvailabilityStatus nvarchar(max) NULL;
+END
+
+IF COL_LENGTH('dbo.Products', 'ListingLocation') IS NULL
+BEGIN
+    ALTER TABLE dbo.Products ADD ListingLocation nvarchar(200) NULL;
+END
+
+IF COL_LENGTH('dbo.Products', 'ShowPhoneNumber') IS NULL
+BEGIN
+    ALTER TABLE dbo.Products ADD ShowPhoneNumber bit NOT NULL CONSTRAINT DF_Products_ShowPhoneNumber DEFAULT(1);
 END");
 
             // Seed Roles
