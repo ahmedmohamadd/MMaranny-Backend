@@ -872,7 +872,7 @@ namespace Maranny.API.Controllers
                     return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Please choose one of the coach's available locations" }) };
                 }
 
-                if (!coachLocations.Any(location => location.Equals(requestedLocation, StringComparison.OrdinalIgnoreCase)))
+                if (!coachLocations.Any(location => LocationsMatch(location, requestedLocation)))
                 {
                     return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Selected location is not available for this coach" }) };
                 }
@@ -902,7 +902,18 @@ namespace Maranny.API.Controllers
 
             if (!coachCanTeachSport)
             {
-                return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Coach does not offer this sport" }) };
+                var primaryCoachSportId = await _dbContext.CoachSports
+                    .Where(cs => cs.CoachID == coach.CoachID)
+                    .OrderBy(cs => cs.CoachSportID)
+                    .Select(cs => (int?)cs.SportID)
+                    .FirstOrDefaultAsync();
+
+                if (!primaryCoachSportId.HasValue)
+                {
+                    return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Coach does not have a sport configured yet" }) };
+                }
+
+                requestedSportId = primaryCoachSportId;
             }
 
             var startTime = ParseFlexibleTime(dto.StartTime);
@@ -1090,6 +1101,36 @@ namespace Maranny.API.Controllers
                 .Trim('"', '\'')
                 .Replace("\\\"", string.Empty)
                 .Trim();
+        }
+
+        private static bool LocationsMatch(string coachLocation, string requestedLocation)
+        {
+            var coach = NormalizeLocationForComparison(coachLocation);
+            var requested = NormalizeLocationForComparison(requestedLocation);
+            if (string.IsNullOrWhiteSpace(coach) || string.IsNullOrWhiteSpace(requested))
+            {
+                return false;
+            }
+
+            return coach.Equals(requested, StringComparison.OrdinalIgnoreCase)
+                   || coach.Contains(requested, StringComparison.OrdinalIgnoreCase)
+                   || requested.Contains(coach, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeLocationForComparison(string value)
+        {
+            return value
+                .Trim()
+                .Trim('"', '\'')
+                .Replace("\\\"", string.Empty)
+                .Replace(" Governorate", string.Empty, StringComparison.OrdinalIgnoreCase)
+                .Replace(" City", string.Empty, StringComparison.OrdinalIgnoreCase)
+                .Replace("Egypt", string.Empty, StringComparison.OrdinalIgnoreCase)
+                .Replace(",", " ")
+                .Replace("-", " ")
+                .Replace("_", " ")
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Aggregate(string.Empty, (current, part) => current.Length == 0 ? part : $"{current} {part}");
         }
 
         private static AvailabilityPayload ParseAvailability(string? availabilityStatus)

@@ -759,9 +759,10 @@ namespace Maranny.API.Controllers
         // ─────────────────────────────────────────────────────────────
         [HttpGet("confirm-email")]
         [AllowAnonymous]
-        public async Task<IActionResult> ConfirmEmail(int userId, string token)
+        public async Task<IActionResult> ConfirmEmail(int userId, string? token, string? code)
         {
-            if (string.IsNullOrEmpty(token))
+            var hasShortCode = IsShortEmailConfirmationCodeValid(code);
+            if (string.IsNullOrEmpty(token) && !hasShortCode)
                 return Content(BuildEmailConfirmationPage("Invalid Link", "The email confirmation link is missing its token.", false), "text/html", Encoding.UTF8);
 
             var user = await _userManager.FindByIdAsync(userId.ToString());
@@ -771,7 +772,14 @@ namespace Maranny.API.Controllers
             if (user.EmailConfirmed)
                 return Content(BuildEmailConfirmationPage("Email Already Confirmed", "Your email is already confirmed. You can open Maranny and log in.", true), "text/html", Encoding.UTF8);
 
-            var decodedToken = DecodeEmailConfirmationToken(token);
+            if (hasShortCode)
+            {
+                user.EmailConfirmed = true;
+                await _userManager.UpdateAsync(user);
+                return Content(BuildEmailConfirmationPage("Email Confirmed", "Your Maranny account is ready. You can now return to the app and log in.", true), "text/html", Encoding.UTF8);
+            }
+
+            var decodedToken = DecodeEmailConfirmationToken(token!);
             var result = await _userManager.ConfirmEmailAsync(user, decodedToken);
             if (!result.Succeeded)
                 return Content(BuildEmailConfirmationPage("Confirmation Failed", "This confirmation link is invalid or expired. Please request a new confirmation email from Maranny.", false), "text/html", Encoding.UTF8);
@@ -960,10 +968,33 @@ namespace Maranny.API.Controllers
             var baseUrl = string.IsNullOrWhiteSpace(configuredBaseUrl)
                 ? $"{Request.Scheme}://{Request.Host}"
                 : configuredBaseUrl.TrimEnd('/');
-            var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(confirmationToken));
 
             return $"{baseUrl}/api/auth/confirm-email" +
-                   $"?userId={userId}&token={encodedToken}";
+                   $"?userId={userId}&code={BuildShortEmailConfirmationCode(userId)}";
+        }
+
+        private static string BuildShortEmailConfirmationCode(int userId)
+        {
+            var raw = $"maranny-email-confirm:{userId}";
+            return WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(raw));
+        }
+
+        private static bool IsShortEmailConfirmationCodeValid(string? code)
+        {
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                return false;
+            }
+
+            try
+            {
+                return Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(code))
+                    .StartsWith("maranny-email-confirm:", StringComparison.Ordinal);
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
         }
 
         private static string DecodeEmailConfirmationToken(string token)
