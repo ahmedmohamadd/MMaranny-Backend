@@ -129,8 +129,7 @@ namespace Maranny.API.Controllers
             try
             {
                 var confirmationToken = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-                var confirmationLink = $"{Request.Scheme}://{Request.Host}/api/auth/confirm-email" +
-                                       $"?userId={user.Id}&token={Uri.EscapeDataString(confirmationToken)}";
+                var confirmationLink = BuildEmailConfirmationLink(user.Id, confirmationToken);
                 await _emailService.SendEmailConfirmationAsync(user.Email!, dto.FirstName, confirmationLink);
             }
             catch (Exception)
@@ -798,8 +797,7 @@ namespace Maranny.API.Controllers
                 return Ok(new { message = genericMessage });
 
             var confirmationToken = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-            var confirmationLink = $"{Request.Scheme}://{Request.Host}/api/auth/confirm-email" +
-                                   $"?userId={user.Id}&token={Uri.EscapeDataString(confirmationToken)}";
+            var confirmationLink = BuildEmailConfirmationLink(user.Id, confirmationToken);
 
             try
             {
@@ -951,6 +949,17 @@ namespace Maranny.API.Controllers
             coach.Age = dto.Age;
             coach.CertificateUrl = dto.CertificateUrl?.Trim();
             coach.AvailabilityStatus = SerializeAvailability(dto.AvailableDays, dto.AvailableHours, dto.DayHourSlots);
+        }
+
+        private string BuildEmailConfirmationLink(int userId, string confirmationToken)
+        {
+            var configuredBaseUrl = _configuration["AppSettings:PublicBaseUrl"];
+            var baseUrl = string.IsNullOrWhiteSpace(configuredBaseUrl)
+                ? $"{Request.Scheme}://{Request.Host}"
+                : configuredBaseUrl.TrimEnd('/');
+
+            return $"{baseUrl}/api/auth/confirm-email" +
+                   $"?userId={userId}&token={Uri.EscapeDataString(confirmationToken)}";
         }
 
         private async Task<CoachOnboardingState> BuildCoachOnboardingStateAsync(Coach coach)
