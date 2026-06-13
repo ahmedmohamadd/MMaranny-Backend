@@ -233,6 +233,31 @@ END
 IF COL_LENGTH('dbo.Clients', 'Bio') IS NULL
 BEGIN
     ALTER TABLE dbo.Clients ADD Bio nvarchar(1000) NULL;
+END
+
+IF OBJECT_ID('dbo.ChatMessages', 'U') IS NOT NULL AND COL_LENGTH('dbo.ChatMessages', 'MessageType') IS NULL
+BEGIN
+    ALTER TABLE dbo.ChatMessages ADD MessageType nvarchar(50) NOT NULL CONSTRAINT DF_ChatMessages_MessageType DEFAULT('text');
+END
+
+IF OBJECT_ID('dbo.ChatMessages', 'U') IS NOT NULL AND COL_LENGTH('dbo.ChatMessages', 'AttachmentUrl') IS NULL
+BEGIN
+    ALTER TABLE dbo.ChatMessages ADD AttachmentUrl nvarchar(500) NULL;
+END
+
+IF OBJECT_ID('dbo.ChatMessages', 'U') IS NOT NULL AND COL_LENGTH('dbo.ChatMessages', 'Latitude') IS NULL
+BEGIN
+    ALTER TABLE dbo.ChatMessages ADD Latitude float NULL;
+END
+
+IF OBJECT_ID('dbo.ChatMessages', 'U') IS NOT NULL AND COL_LENGTH('dbo.ChatMessages', 'Longitude') IS NULL
+BEGIN
+    ALTER TABLE dbo.ChatMessages ADD Longitude float NULL;
+END
+
+IF OBJECT_ID('dbo.ChatMessages', 'U') IS NOT NULL AND COL_LENGTH('dbo.ChatMessages', 'Reaction') IS NULL
+BEGIN
+    ALTER TABLE dbo.ChatMessages ADD Reaction nvarchar(20) NULL;
 END");
 
             // Seed Roles

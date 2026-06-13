@@ -96,50 +96,81 @@ namespace Maranny.Infrastructure.Services
 
         public async Task<List<object>> GetUserConversationsAsync(int userId)
         {
-            // Get all users that current user has chatted with
-            var conversations = await _dbContext.ChatMessages
+            var messages = await _dbContext.ChatMessages
                 .Where(m => m.SenderID == userId || m.ReceiverID == userId)
-                .GroupBy(m => m.SenderID == userId ? m.ReceiverID : m.SenderID)
-                .Select(g => new
-                {
-                    OtherUserId = g.Key,
-                    LastMessage = g.OrderByDescending(m => m.SentAt).FirstOrDefault(),
-                    UnreadCount = g.Count(m => m.ReceiverID == userId && !m.IsRead)
-                })
+                .OrderByDescending(m => m.SentAt)
+                .AsNoTracking()
                 .ToListAsync();
 
-            // Get user details for each conversation
-            var result = new List<object>();
-            foreach (var conv in conversations)
+            if (messages.Count == 0)
             {
-                var otherUser = await _dbContext.Users
-                    .Include(u => u.Client)
-                    .Include(u => u.Coach)
-                    .FirstOrDefaultAsync(u => u.Id == conv.OtherUserId);
-
-                if (otherUser != null && conv.LastMessage != null)
-                {
-                    result.Add(new
-                    {
-                        UserId = conv.OtherUserId,
-                        Name = (otherUser.Client != null
-    ? otherUser.Client.F_name + " " + otherUser.Client.L_name
-    : otherUser.Coach != null
-        ? otherUser.Coach.F_name + " " + otherUser.Coach.L_name
-        : otherUser.Email),
-                        LastMessage = conv.LastMessage.MessageType == "image"
-                            ? "Photo attachment"
-                            : conv.LastMessage.MessageType == "location"
-                                ? "Location shared"
-                                : conv.LastMessage.Content,
-                        LastMessageTime = conv.LastMessage.SentAt,
-                        UnreadCount = conv.UnreadCount,
-                        IsOnline = ChatHub.IsUserOnline(conv.OtherUserId)
-                    });
-                }
+                return new List<object>();
             }
 
-            return result.OrderByDescending(c => ((dynamic)c).LastMessageTime).ToList();
+            var otherUserIds = messages
+                .Select(m => m.SenderID == userId ? m.ReceiverID : m.SenderID)
+                .Distinct()
+                .ToList();
+
+            var users = await _dbContext.Users
+                .Include(u => u.Client)
+                .Include(u => u.Coach)
+                .Where(u => otherUserIds.Contains(u.Id))
+                .AsNoTracking()
+                .ToDictionaryAsync(u => u.Id);
+
+            var result = messages
+                .GroupBy(m => m.SenderID == userId ? m.ReceiverID : m.SenderID)
+                .Select(group =>
+                {
+                    var otherUserId = group.Key;
+                    var lastMessage = group.OrderByDescending(m => m.SentAt).First();
+                    users.TryGetValue(otherUserId, out var otherUser);
+
+                    return new
+                    {
+                        UserId = otherUserId,
+                        Name = ResolveDisplayName(otherUser),
+                        ImageUrl = otherUser?.Client?.URL ?? otherUser?.Coach?.URL,
+                        LastMessage = ResolveLastMessagePreview(lastMessage),
+                        LastMessageTime = lastMessage.SentAt,
+                        UnreadCount = group.Count(m => m.ReceiverID == userId && !m.IsRead),
+                        IsOnline = ChatHub.IsUserOnline(otherUserId)
+                    };
+                })
+                .OrderByDescending(c => c.LastMessageTime)
+                .Cast<object>()
+                .ToList();
+
+            return result;
+        }
+
+        private static string ResolveDisplayName(ApplicationUser? user)
+        {
+            if (user?.Client != null)
+            {
+                var name = $"{user.Client.F_name} {user.Client.L_name}".Trim();
+                if (!string.IsNullOrWhiteSpace(name)) return name;
+            }
+
+            if (user?.Coach != null)
+            {
+                var name = $"{user.Coach.F_name} {user.Coach.L_name}".Trim();
+                if (!string.IsNullOrWhiteSpace(name)) return name;
+            }
+
+            return user?.Email ?? "User";
+        }
+
+        private static string ResolveLastMessagePreview(ChatMessage message)
+        {
+            var messageType = message.MessageType?.Trim().ToLowerInvariant();
+            return messageType switch
+            {
+                "image" => "Photo attachment",
+                "location" => "Location shared",
+                _ => message.Content
+            };
         }
 
         public async Task MarkMessagesAsReadAsync(int senderId, int receiverId)
