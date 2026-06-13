@@ -396,6 +396,7 @@ namespace Maranny.API.Controllers
                 .Include(u => u.Client)
                 .Include(u => u.Coach)
                 .Include(u => u.Admin)
+                .Include(u => u.UserPreferences)
                 .FirstOrDefaultAsync(u => u.Id == userId);
 
             if (user == null || user.IsBlocked)
@@ -495,7 +496,11 @@ namespace Maranny.API.Controllers
                 roles,
                 emailConfirmed = user.EmailConfirmed,
                 isBlocked = user.IsBlocked,
-                profilePicture = user.Client?.URL ?? user.Coach?.URL,       
+                profilePicture = user.Client?.URL ?? user.Coach?.URL,
+                city = user.Client?.City,
+                street = user.Client?.Street_name,
+                bio = user.Client?.Bio ?? user.Coach?.Bio,
+                preferences = BuildPreferencesResponse(user.UserPreferences),
                 verificationStatus = user.Coach != null
                     ? user.Coach.VerificationStatus.ToString()
                     : null,
@@ -503,6 +508,105 @@ namespace Maranny.API.Controllers
                     ? coachOnboardingState.IsComplete
                     : (bool?)null
             });
+        }
+
+        private static object BuildPreferencesResponse(UserPreferences? preferences)
+        {
+            var details = ParseStoredPreferences(preferences?.Sports);
+
+            return new
+            {
+                sports = details.Sports,
+                budgetMin = preferences?.BudgetMin,
+                budgetMax = preferences?.BudgetMax,
+                maxDistance = preferences?.MaxDistance,
+                city = details.City,
+                area = details.Area,
+                locationPreference = details.LocationPreference,
+                ratingPreference = details.RatingPreference,
+                coachGender = details.CoachGender,
+                coachAgeRange = details.CoachAgeRange,
+                certifiedOnly = details.CertifiedOnly
+            };
+        }
+
+        private static StoredPreferenceDetails ParseStoredPreferences(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return new StoredPreferenceDetails();
+
+            try
+            {
+                using var document = JsonDocument.Parse(raw);
+                var root = document.RootElement;
+                return new StoredPreferenceDetails
+                {
+                    Sports = ReadStringArray(root, "sports"),
+                    City = ReadString(root, "city"),
+                    Area = ReadString(root, "area"),
+                    LocationPreference = ReadString(root, "locationPreference"),
+                    RatingPreference = ReadString(root, "ratingPreference"),
+                    CoachGender = ReadString(root, "coachGender"),
+                    CoachAgeRange = ReadString(root, "coachAgeRange"),
+                    CertifiedOnly = ReadBool(root, "certifiedOnly")
+                };
+            }
+            catch (JsonException)
+            {
+                return new StoredPreferenceDetails
+                {
+                    Sports = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Where(sport => !string.IsNullOrWhiteSpace(sport))
+                        .ToList()
+                };
+            }
+        }
+
+        private static List<string> ReadStringArray(JsonElement root, string propertyName)
+        {
+            if (!root.TryGetProperty(propertyName, out var property) ||
+                property.ValueKind != JsonValueKind.Array)
+            {
+                return new List<string>();
+            }
+
+            return property.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString()?.Trim())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string? ReadString(JsonElement root, string propertyName)
+        {
+            if (!root.TryGetProperty(propertyName, out var property) ||
+                property.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var value = property.GetString()?.Trim();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+
+        private static bool ReadBool(JsonElement root, string propertyName)
+        {
+            return root.TryGetProperty(propertyName, out var property) &&
+                property.ValueKind == JsonValueKind.True;
+        }
+
+        private sealed class StoredPreferenceDetails
+        {
+            public List<string> Sports { get; init; } = new();
+            public string? City { get; init; }
+            public string? Area { get; init; }
+            public string? LocationPreference { get; init; }
+            public string? RatingPreference { get; init; }
+            public string? CoachGender { get; init; }
+            public string? CoachAgeRange { get; init; }
+            public bool CertifiedOnly { get; init; }
         }
 
         // ─────────────────────────────────────────────────────────────

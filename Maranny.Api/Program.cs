@@ -228,6 +228,11 @@ END
 IF COL_LENGTH('dbo.Products', 'ShowPhoneNumber') IS NULL
 BEGIN
     ALTER TABLE dbo.Products ADD ShowPhoneNumber bit NOT NULL CONSTRAINT DF_Products_ShowPhoneNumber DEFAULT(1);
+END
+
+IF COL_LENGTH('dbo.Clients', 'Bio') IS NULL
+BEGIN
+    ALTER TABLE dbo.Clients ADD Bio nvarchar(1000) NULL;
 END");
 
             // Seed Roles

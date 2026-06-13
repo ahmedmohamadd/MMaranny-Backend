@@ -48,9 +48,11 @@ namespace Maranny.API.Controllers
             }
 
             // Update phone number in ApplicationUser
-            if (!string.IsNullOrWhiteSpace(dto.PhoneNumber))
+            if (dto.PhoneNumber != null)
             {
-                user.PhoneNumber = dto.PhoneNumber;
+                user.PhoneNumber = string.IsNullOrWhiteSpace(dto.PhoneNumber)
+                    ? null
+                    : dto.PhoneNumber.Trim();
                 await _userManager.UpdateAsync(user);
             }
 
@@ -62,14 +64,17 @@ namespace Maranny.API.Controllers
                 if (!string.IsNullOrWhiteSpace(dto.LastName))
                     user.Client.L_name = dto.LastName;
 
-                if (!string.IsNullOrWhiteSpace(dto.City))
-                    user.Client.City = dto.City;
+                if (dto.City != null)
+                    user.Client.City = string.IsNullOrWhiteSpace(dto.City) ? null : dto.City.Trim();
 
-                if (!string.IsNullOrWhiteSpace(dto.Street))
-                    user.Client.Street_name = dto.Street;
+                if (dto.Street != null)
+                    user.Client.Street_name = string.IsNullOrWhiteSpace(dto.Street) ? null : dto.Street.Trim();
 
-                if (!string.IsNullOrWhiteSpace(dto.BuildingNumber))
-                    user.Client.Build_num = dto.BuildingNumber;
+                if (dto.BuildingNumber != null)
+                    user.Client.Build_num = string.IsNullOrWhiteSpace(dto.BuildingNumber) ? null : dto.BuildingNumber.Trim();
+
+                if (dto.Bio != null)
+                    user.Client.Bio = string.IsNullOrWhiteSpace(dto.Bio) ? null : dto.Bio.Trim();
 
                 if (dto.DateOfBirth.HasValue)
                     user.Client.Date_of_Birth = dto.DateOfBirth.Value;
@@ -102,7 +107,55 @@ namespace Maranny.API.Controllers
             return Ok(new { message = "Profile updated successfully" });
         }
 
-                [HttpPut("preferences")]
+        [HttpGet("preferences")]
+        public async Task<IActionResult> GetPreferences()
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdClaim, out int userId))
+            {
+                return Unauthorized();
+            }
+
+            var preferences = await _dbContext.UserPreferences
+                .FirstOrDefaultAsync(p => p.UserId == userId);
+
+            if (preferences == null)
+            {
+                return Ok(new
+                {
+                    sports = Array.Empty<string>(),
+                    budgetMin = (decimal?)null,
+                    budgetMax = (decimal?)null,
+                    maxDistance = (decimal?)null,
+                    city = (string?)null,
+                    area = (string?)null,
+                    locationPreference = (string?)null,
+                    ratingPreference = (string?)null,
+                    coachGender = (string?)null,
+                    coachAgeRange = (string?)null,
+                    certifiedOnly = false
+                });
+            }
+
+            var details = ParseStoredPreferences(preferences.Sports);
+
+            return Ok(new
+            {
+                sports = details.Sports,
+                budgetMin = preferences.BudgetMin,
+                budgetMax = preferences.BudgetMax,
+                maxDistance = preferences.MaxDistance,
+                city = details.City,
+                area = details.Area,
+                locationPreference = details.LocationPreference,
+                ratingPreference = details.RatingPreference,
+                coachGender = details.CoachGender,
+                coachAgeRange = details.CoachAgeRange,
+                certifiedOnly = details.CertifiedOnly
+            });
+        }
+
+        [HttpPut("preferences")]
         public async Task<IActionResult> UpdatePreferences(UpdatePreferencesDto dto)
         {
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -480,6 +533,76 @@ namespace Maranny.API.Controllers
             };
         }
 
+        private static StoredPreferenceDetails ParseStoredPreferences(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return new StoredPreferenceDetails();
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(raw);
+                var root = document.RootElement;
+
+                return new StoredPreferenceDetails
+                {
+                    Sports = ReadStringArray(root, "sports"),
+                    City = ReadString(root, "city"),
+                    Area = ReadString(root, "area"),
+                    LocationPreference = ReadString(root, "locationPreference"),
+                    RatingPreference = ReadString(root, "ratingPreference"),
+                    CoachGender = ReadString(root, "coachGender"),
+                    CoachAgeRange = ReadString(root, "coachAgeRange"),
+                    CertifiedOnly = ReadBool(root, "certifiedOnly")
+                };
+            }
+            catch (JsonException)
+            {
+                return new StoredPreferenceDetails
+                {
+                    Sports = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Where(sport => !string.IsNullOrWhiteSpace(sport))
+                        .ToList()
+                };
+            }
+        }
+
+        private static List<string> ReadStringArray(JsonElement root, string propertyName)
+        {
+            if (!root.TryGetProperty(propertyName, out var property) ||
+                property.ValueKind != JsonValueKind.Array)
+            {
+                return new List<string>();
+            }
+
+            return property.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString()?.Trim())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string? ReadString(JsonElement root, string propertyName)
+        {
+            if (!root.TryGetProperty(propertyName, out var property) ||
+                property.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var value = property.GetString()?.Trim();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+
+        private static bool ReadBool(JsonElement root, string propertyName)
+        {
+            return root.TryGetProperty(propertyName, out var property) &&
+                property.ValueKind == JsonValueKind.True;
+        }
+
         private sealed class DayHourSlot
         {
             public string Day { get; set; } = string.Empty;
@@ -491,6 +614,18 @@ namespace Maranny.API.Controllers
             public List<string> AvailableDays { get; set; } = new();
             public List<string> AvailableHours { get; set; } = new();
             public List<DayHourSlot> DayHourSlots { get; set; } = new();
+        }
+
+        private sealed class StoredPreferenceDetails
+        {
+            public List<string> Sports { get; init; } = new();
+            public string? City { get; init; }
+            public string? Area { get; init; }
+            public string? LocationPreference { get; init; }
+            public string? RatingPreference { get; init; }
+            public string? CoachGender { get; init; }
+            public string? CoachAgeRange { get; init; }
+            public bool CertifiedOnly { get; init; }
         }
 
         [HttpPost("profile/image")]

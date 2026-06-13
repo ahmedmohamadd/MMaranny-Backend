@@ -51,6 +51,9 @@ namespace Maranny.Core.Entities
         [MaxLength(500)]
         public string? URL { get; set; }
 
+        [MaxLength(1000)]
+        public string? Bio { get; set; }
+
         public bool IsPhoneVerified { get; set; } = false;
 
         public bool IsEmailVerified { get; set; } = false;
