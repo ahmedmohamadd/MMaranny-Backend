@@ -106,6 +106,224 @@ namespace Maranny.API.Controllers
             return Ok(new { message = "User unblocked successfully" });
         }
 
+        [HttpDelete("users/{userId}")]
+        public async Task<IActionResult> DeleteUser(int userId)
+        {
+            var user = await _dbContext.Users
+                .Include(u => u.Client)
+                .Include(u => u.Coach)
+                .Include(u => u.Admin)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null)
+            {
+                return NotFound(new { error = "User not found" });
+            }
+
+            if (user.Admin != null || user.PrimaryUserType == UserType.Admin)
+            {
+                return BadRequest(new { error = "Admin accounts cannot be deleted from the dashboard" });
+            }
+
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync();
+
+            var clientId = user.Client?.ClientID;
+            var coachId = user.Coach?.CoachID;
+            if (user.Client != null)
+            {
+                _dbContext.Entry(user.Client).State = EntityState.Detached;
+            }
+            if (user.Coach != null)
+            {
+                _dbContext.Entry(user.Coach).State = EntityState.Detached;
+            }
+
+            var sessionIds = coachId.HasValue
+                ? await _dbContext.TrainingSessions
+                    .Where(s => s.CoachID == coachId.Value)
+                    .Select(s => s.SessionID)
+                    .ToListAsync()
+                : new List<int>();
+
+            var bookingIds = await _dbContext.Bookings
+                .Where(b =>
+                    (clientId.HasValue && b.ClientID == clientId.Value) ||
+                    sessionIds.Contains(b.SessionID))
+                .Select(b => b.BookingID)
+                .ToListAsync();
+
+            var paymentIds = await _dbContext.Payments
+                .Where(p =>
+                    (clientId.HasValue && p.ClientID == clientId.Value) ||
+                    sessionIds.Contains(p.SessionID) ||
+                    bookingIds.Contains(p.BookingID))
+                .Select(p => p.PaymentID)
+                .ToListAsync();
+
+            var productIds = clientId.HasValue
+                ? await _dbContext.Products
+                    .Where(p => p.ClientID == clientId.Value)
+                    .Select(p => p.ProductID)
+                    .ToListAsync()
+                : new List<int>();
+
+            var reviewIds = await _dbContext.Reviews
+                .Where(r =>
+                    (clientId.HasValue && r.ClientID == clientId.Value) ||
+                    (coachId.HasValue && r.CoachID == coachId.Value) ||
+                    sessionIds.Contains(r.SessionID))
+                .Select(r => r.ReviewID)
+                .ToListAsync();
+
+            var reportIds = await _dbContext.Reports
+                .Where(r =>
+                    (coachId.HasValue && r.CoachID == coachId.Value) ||
+                    (r.ProductID.HasValue && productIds.Contains(r.ProductID.Value)) ||
+                    (r.Description != null &&
+                        (r.Description.Contains($"UserID {userId}") ||
+                         r.Description.Contains($"UserID: {userId}"))))
+                .Select(r => r.ReportID)
+                .ToListAsync();
+
+            var recommendationIds = await _dbContext.Recommendations
+                .Where(r => coachId.HasValue && r.CoachID == coachId.Value)
+                .Select(r => r.RecommendationID)
+                .ToListAsync();
+
+            var notificationIds = await _dbContext.Notifications
+                .Where(n =>
+                    (n.BookingID.HasValue && bookingIds.Contains(n.BookingID.Value)) ||
+                    (n.PaymentID.HasValue && paymentIds.Contains(n.PaymentID.Value)) ||
+                    (n.ReviewID.HasValue && reviewIds.Contains(n.ReviewID.Value)) ||
+                    (n.ProductID.HasValue && productIds.Contains(n.ProductID.Value)))
+                .Select(n => n.NotificationID)
+                .ToListAsync();
+
+            await _dbContext.ChatMessages
+                .Where(m => m.SenderID == userId || m.ReceiverID == userId)
+                .ExecuteDeleteAsync();
+            await _dbContext.UserInteractions
+                .Where(i => i.UserId == userId || (coachId.HasValue && i.CoachId == coachId.Value))
+                .ExecuteDeleteAsync();
+            await _dbContext.RefreshTokens
+                .Where(t => t.UserId == userId)
+                .ExecuteDeleteAsync();
+            await _dbContext.PasswordResetTokens
+                .Where(t => t.UserId == userId)
+                .ExecuteDeleteAsync();
+            await _dbContext.UserPreferences
+                .Where(p => p.UserId == userId)
+                .ExecuteDeleteAsync();
+
+            await _dbContext.ClientNotifications
+                .Where(n => n.ClientID == userId || notificationIds.Contains(n.NotificationID))
+                .ExecuteDeleteAsync();
+            await _dbContext.CoachNotifications
+                .Where(n => n.CoachID == userId || notificationIds.Contains(n.NotificationID))
+                .ExecuteDeleteAsync();
+            await _dbContext.ReportNotifications
+                .Where(n => reportIds.Contains(n.ReportID) || notificationIds.Contains(n.NotificationID))
+                .ExecuteDeleteAsync();
+            await _dbContext.Notifications
+                .Where(n => notificationIds.Contains(n.NotificationID))
+                .ExecuteDeleteAsync();
+
+            await _dbContext.AdminReports
+                .Where(r => reportIds.Contains(r.ReportID))
+                .ExecuteDeleteAsync();
+            await _dbContext.ClientReports
+                .Where(r => reportIds.Contains(r.ReportID) || (clientId.HasValue && r.ClientID == clientId.Value))
+                .ExecuteDeleteAsync();
+            await _dbContext.Reports
+                .Where(r => reportIds.Contains(r.ReportID))
+                .ExecuteDeleteAsync();
+
+            await _dbContext.AdminProducts
+                .Where(p => productIds.Contains(p.ProductID))
+                .ExecuteDeleteAsync();
+            await _dbContext.SportProducts
+                .Where(p => productIds.Contains(p.ProductID))
+                .ExecuteDeleteAsync();
+
+            await _dbContext.ClientSessions
+                .Where(s =>
+                    (clientId.HasValue && s.ClientID == clientId.Value) ||
+                    sessionIds.Contains(s.SessionID))
+                .ExecuteDeleteAsync();
+            await _dbContext.Payments
+                .Where(p => paymentIds.Contains(p.PaymentID))
+                .ExecuteDeleteAsync();
+            await _dbContext.Reviews
+                .Where(r => reviewIds.Contains(r.ReviewID))
+                .ExecuteDeleteAsync();
+            await _dbContext.Bookings
+                .Where(b => bookingIds.Contains(b.BookingID))
+                .ExecuteDeleteAsync();
+            await _dbContext.TrainingSessions
+                .Where(s => sessionIds.Contains(s.SessionID))
+                .ExecuteDeleteAsync();
+
+            if (clientId.HasValue)
+            {
+                await _dbContext.ClientPhones
+                    .Where(p => p.ClientID == clientId.Value)
+                    .ExecuteDeleteAsync();
+                await _dbContext.ClientAdmins
+                    .Where(a => a.ClientID == clientId.Value)
+                    .ExecuteDeleteAsync();
+                await _dbContext.ClientRecommendations
+                    .Where(r => r.ClientID == clientId.Value)
+                    .ExecuteDeleteAsync();
+                await _dbContext.CoachClients
+                    .Where(c => c.ClientID == clientId.Value)
+                    .ExecuteDeleteAsync();
+                await _dbContext.Products
+                    .Where(p => p.ClientID == clientId.Value)
+                    .ExecuteDeleteAsync();
+                await _dbContext.Clients
+                    .Where(c => c.ClientID == clientId.Value)
+                    .ExecuteDeleteAsync();
+            }
+
+            if (coachId.HasValue)
+            {
+                await _dbContext.ClientRecommendations
+                    .Where(r => recommendationIds.Contains(r.RecommendationID))
+                    .ExecuteDeleteAsync();
+                await _dbContext.RecommendedSports
+                    .Where(r => recommendationIds.Contains(r.RecommendationID))
+                    .ExecuteDeleteAsync();
+                await _dbContext.CoachLocations
+                    .Where(l => l.CoachID == coachId.Value)
+                    .ExecuteDeleteAsync();
+                await _dbContext.CoachSports
+                    .Where(s => s.CoachID == coachId.Value)
+                    .ExecuteDeleteAsync();
+                await _dbContext.CoachAdmins
+                    .Where(a => a.CoachID == coachId.Value)
+                    .ExecuteDeleteAsync();
+                await _dbContext.CoachClients
+                    .Where(c => c.CoachID == coachId.Value)
+                    .ExecuteDeleteAsync();
+                await _dbContext.Recommendations
+                    .Where(r => r.CoachID == coachId.Value)
+                    .ExecuteDeleteAsync();
+                await _dbContext.Coaches
+                    .Where(c => c.CoachID == coachId.Value)
+                    .ExecuteDeleteAsync();
+            }
+
+            var deleteResult = await _userManager.DeleteAsync(user);
+            if (!deleteResult.Succeeded)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest(new { errors = deleteResult.Errors.Select(e => e.Description) });
+            }
+
+            await transaction.CommitAsync();
+            return Ok(new { message = "User and related data deleted successfully", userId });
+        }
+
         [HttpGet("reports")]
         public async Task<IActionResult> GetReports(
             [FromQuery] string? status = null,
