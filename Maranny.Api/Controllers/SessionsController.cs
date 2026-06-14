@@ -22,6 +22,19 @@ namespace Maranny.API.Controllers
             _dbContext = dbContext;
         }
 
+        private static DateTime CairoNow()
+        {
+            try
+            {
+                var zone = TimeZoneInfo.FindSystemTimeZoneById("Egypt Standard Time");
+                return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, zone);
+            }
+            catch
+            {
+                return DateTime.UtcNow.AddHours(3);
+            }
+        }
+
         private static AvailabilityPayload ParseAvailability(string? availabilityStatus)
         {
             if (string.IsNullOrWhiteSpace(availabilityStatus))
@@ -117,7 +130,7 @@ namespace Maranny.API.Controllers
                 return results;
             }
 
-            var date = DateTime.UtcNow.Date;
+            var date = CairoNow().Date;
             while (results.Count < numberOfOccurrences)
             {
                 if (dayNumbers.Contains((int)date.DayOfWeek))
@@ -164,7 +177,7 @@ namespace Maranny.API.Controllers
                 return BadRequest(new { error = "Coach must be verified before creating sessions" });
             }
 
-            if (dto.SessionDate.Date < DateTime.UtcNow.Date)
+            if (dto.SessionDate.Date < CairoNow().Date)
             {
                 return BadRequest(new { error = "Cannot create session in the past" });
             }
@@ -306,7 +319,7 @@ namespace Maranny.API.Controllers
                 .Include(s => s.Sport)
                 .Where(s => s.CoachID == coachId &&
                             s.Status == SessionStatus.Scheduled &&
-                            s.SessionDate >= DateTime.UtcNow.Date)
+                            s.SessionDate >= CairoNow().Date)
                 .OrderBy(s => s.SessionDate)
                 .ThenBy(s => s.Start_Time)
                 .Select(s => new
@@ -405,7 +418,7 @@ namespace Maranny.API.Controllers
                 .Include(s => s.Sport)
                 .Include(s => s.Coach)
                 .Where(s => s.Status == SessionStatus.Scheduled &&
-                           s.SessionDate >= DateTime.UtcNow.Date);
+                           s.SessionDate >= CairoNow().Date);
 
             if (coachId.HasValue)
             {

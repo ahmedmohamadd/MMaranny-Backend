@@ -77,11 +77,19 @@ namespace Maranny.API.Controllers
             var coach = await _dbContext.Coaches.FirstOrDefaultAsync(c => c.UserId == userId.Value);
             var reportedCoach = await ResolveReportedCoach(dto);
             var reportedClient = await ResolveReportedClient(dto);
+            var reportCoachId = reportedCoach?.CoachID ?? dto.CoachId;
+            if (!reportCoachId.HasValue)
+            {
+                reportCoachId = coach?.CoachID ?? await _dbContext.Coaches
+                    .OrderBy(c => c.CoachID)
+                    .Select(c => (int?)c.CoachID)
+                    .FirstOrDefaultAsync();
+            }
 
             var report = new Report
             {
                 ProductID = dto.ProductId,
-                CoachID = reportedCoach?.CoachID ?? dto.CoachId,
+                CoachID = reportCoachId,
                 ReporterType = reporterType,
                 ReportedType = dto.ReportedType?.Trim(),
                 Reason = dto.Reason.Trim(),

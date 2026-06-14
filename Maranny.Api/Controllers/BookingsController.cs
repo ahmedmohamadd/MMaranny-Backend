@@ -38,6 +38,19 @@ namespace Maranny.API.Controllers
             _logger = logger;
         }
 
+        private static DateTime CairoNow()
+        {
+            try
+            {
+                var zone = TimeZoneInfo.FindSystemTimeZoneById("Egypt Standard Time");
+                return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, zone);
+            }
+            catch
+            {
+                return DateTime.UtcNow.AddHours(3);
+            }
+        }
+
         [HttpPost]
         [Authorize(Roles = "Client")]
         public async Task<IActionResult> BookSession(CreateBookingDto dto)
@@ -74,7 +87,7 @@ namespace Maranny.API.Controllers
             }
 
             var sessionDateTime = session.SessionDate.Add(session.Start_Time);
-            if (sessionDateTime <= DateTime.UtcNow)
+            if (sessionDateTime <= CairoNow())
             {
                 return BadRequest(new { error = "Cannot book past sessions" });
             }
@@ -214,7 +227,7 @@ namespace Maranny.API.Controllers
             if (!string.IsNullOrWhiteSpace(tab))
             {
                 var normalizedTab = tab.Trim().ToLowerInvariant();
-                var today = DateTime.UtcNow.Date;
+                var today = CairoNow().Date;
 
                 query = normalizedTab switch
                 {
@@ -425,7 +438,7 @@ namespace Maranny.API.Controllers
             if (!string.IsNullOrWhiteSpace(tab))
             {
                 var normalizedTab = tab.Trim().ToLowerInvariant();
-                var today = DateTime.UtcNow.Date;
+                var today = CairoNow().Date;
 
                 query = normalizedTab switch
                 {
@@ -654,12 +667,13 @@ namespace Maranny.API.Controllers
             }
 
             var sessionStartDateTime = booking.TrainingSession.SessionDate.Add(booking.TrainingSession.Start_Time);
-            if (sessionStartDateTime <= DateTime.UtcNow)
+            var now = CairoNow();
+            if (sessionStartDateTime <= now)
             {
                 return BadRequest(new { error = "Cannot cancel booking for sessions that have already started" });
             }
 
-            var hoursUntilSession = (sessionStartDateTime - DateTime.UtcNow).TotalHours;
+            var hoursUntilSession = (sessionStartDateTime - now).TotalHours;
 
             booking.Status = BookingStatus.Cancelled;
             booking.CancelledAt = DateTime.UtcNow;
@@ -766,7 +780,7 @@ namespace Maranny.API.Controllers
             }
 
             var sessionStartDateTime = session.SessionDate.Add(session.Start_Time);
-            if (sessionStartDateTime <= DateTime.UtcNow)
+            if (sessionStartDateTime <= CairoNow())
             {
                 return BadRequest(new { error = "Cannot cancel session that has already started" });
             }
@@ -953,7 +967,8 @@ namespace Maranny.API.Controllers
             }
 
             var sessionDate = dto.SessionDate.Value.Date;
-            if (sessionDate < DateTime.UtcNow.Date || (sessionDate == DateTime.UtcNow.Date && startTime.Value <= DateTime.UtcNow.TimeOfDay))
+            var cairoNow = CairoNow();
+            if (sessionDate < cairoNow.Date || (sessionDate == cairoNow.Date && startTime.Value <= cairoNow.TimeOfDay))
             {
                 return new ResolvedSessionResult { ErrorResult = BadRequest(new { error = "Cannot book a past time slot" }) };
             }
