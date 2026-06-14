@@ -1,5 +1,6 @@
 ﻿using Maranny.Application.DTOs.Search;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Features.Search.GetCoachDetails;
+using Maranny.Application.Features.Search.SearchCoaches;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 
@@ -9,18 +10,22 @@ namespace Maranny.API.Controllers
     [Route("api/search")]
     public class SearchController : ControllerBase
     {
-        private readonly ISearchService _searchService;
+        private readonly ISearchCoachesUseCase _searchCoachesUseCase;
+        private readonly IGetCoachDetailsUseCase _getCoachDetailsUseCase;
 
-        public SearchController(ISearchService searchService)
+        public SearchController(
+            ISearchCoachesUseCase searchCoachesUseCase,
+            IGetCoachDetailsUseCase getCoachDetailsUseCase)
         {
-            _searchService = searchService;
+            _searchCoachesUseCase = searchCoachesUseCase;
+            _getCoachDetailsUseCase = getCoachDetailsUseCase;
         }
 
         [HttpGet("coaches")]
         public async Task<IActionResult> SearchCoaches([FromQuery] CoachSearchDto dto)
         {
-            var result = await _searchService.SearchCoachesAsync(dto);
-            return Ok(result);
+            var result = await _searchCoachesUseCase.ExecuteAsync(new SearchCoachesQuery(dto));
+            return Ok(result.Value);
         }
 
         [HttpGet("coaches/{coachId}")]
@@ -29,9 +34,9 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             int? userId = int.TryParse(userIdClaim, out int id) ? id : null;
 
-            var (success, data) = await _searchService.GetCoachDetailsAsync(coachId, userId);
-            if (!success) return NotFound(new { error = "Coach not found" });
-            return Ok(data);
+            var result = await _getCoachDetailsUseCase.ExecuteAsync(new GetCoachDetailsQuery(coachId, userId));
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
     }
 }

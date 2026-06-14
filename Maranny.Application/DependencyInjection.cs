@@ -24,6 +24,8 @@ using Maranny.Application.Features.Reviews.SubmitReview;
 using Maranny.Application.Features.Payments.GetMyPayments;
 using Maranny.Application.Features.Payments.GetPaymentDetails;
 using Maranny.Application.Features.Payments.InitiatePayment;
+using Maranny.Application.Features.Search.GetCoachDetails;
+using Maranny.Application.Features.Search.SearchCoaches;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Maranny.Application
@@ -58,6 +60,8 @@ namespace Maranny.Application
             services.AddScoped<IInitiatePaymentUseCase, InitiatePaymentUseCase>();
             services.AddScoped<IGetPaymentDetailsUseCase, GetPaymentDetailsUseCase>();
             services.AddScoped<IGetMyPaymentsUseCase, GetMyPaymentsUseCase>();
+            services.AddScoped<ISearchCoachesUseCase, SearchCoachesUseCase>();
+            services.AddScoped<IGetCoachDetailsUseCase, GetCoachDetailsUseCase>();
 
             return services;
         }

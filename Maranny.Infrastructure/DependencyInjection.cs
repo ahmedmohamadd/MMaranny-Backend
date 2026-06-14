@@ -26,7 +26,6 @@ namespace Maranny.Infrastructure
 
             services.AddScoped<IAdminService, AdminService>();
             services.AddScoped<IUserService, UsersService>();
-            services.AddScoped<ISearchService, SearchService>();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IJwtService, JwtService>();
             services.AddScoped<IEmailValidationService, EmailValidationService>();
@@ -52,6 +51,7 @@ namespace Maranny.Infrastructure
             services.AddScoped<IReviewRepository, ReviewRepository>();
             services.AddScoped<IReviewReadRepository, ReviewReadRepository>();
             services.AddScoped<IPaymentReadRepository, PaymentReadRepository>();
+            services.AddScoped<ISearchReadRepository, SearchReadRepository>();
 
             services.AddIdentity<ApplicationUser, IdentityRole<int>>(options =>
             {

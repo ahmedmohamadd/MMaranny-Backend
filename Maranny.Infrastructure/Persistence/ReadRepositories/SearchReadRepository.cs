@@ -1,27 +1,24 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
+using Maranny.Application.Abstractions.Common;
+using Maranny.Application.Abstractions.Persistence;
 using Maranny.Application.DTOs.Search;
-using Maranny.Application.Interfaces;
 using Maranny.Core.Enums;
 using Maranny.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
-namespace Maranny.Infrastructure.Services
+namespace Maranny.Infrastructure.Persistence.ReadRepositories
 {
-    public class SearchService : ISearchService
+    public sealed class SearchReadRepository : ISearchReadRepository
     {
         private readonly ApplicationDbContext _dbContext;
+        private readonly IClock _clock;
 
-        public SearchService(ApplicationDbContext dbContext)
+        public SearchReadRepository(ApplicationDbContext dbContext, IClock clock)
         {
             _dbContext = dbContext;
+            _clock = clock;
         }
 
-        public async Task<object> SearchCoachesAsync(CoachSearchDto dto)
+        public async Task<object> SearchCoachesAsync(CoachSearchDto search)
         {
             var query = _dbContext.Coaches
                 .Include(c => c.User)
@@ -29,46 +26,57 @@ namespace Maranny.Infrastructure.Services
                 .Include(c => c.CoachSports).ThenInclude(cs => cs.Sport)
                 .Where(c => !c.User.IsBlocked);
 
-            if (dto.VerifiedOnly ?? true)
-                query = query.Where(c => c.VerificationStatus == VerificationStatus.Approved);
-
-            if (!string.IsNullOrWhiteSpace(dto.Name))
+            if (search.VerifiedOnly ?? true)
             {
-                var nameLower = dto.Name.ToLower();
+                query = query.Where(c => c.VerificationStatus == VerificationStatus.Approved);
+            }
+
+            if (!string.IsNullOrWhiteSpace(search.Name))
+            {
+                var nameLower = search.Name.ToLower();
                 query = query.Where(c =>
                     (c.F_name + " " + c.L_name).ToLower().Contains(nameLower) ||
                     c.F_name.ToLower().Contains(nameLower) ||
                     c.L_name.ToLower().Contains(nameLower));
             }
 
-            if (dto.SportID.HasValue)
-                query = query.Where(c => c.CoachSports.Any(cs => cs.SportID == dto.SportID.Value));
-
-            if (!string.IsNullOrWhiteSpace(dto.City))
+            if (search.SportID.HasValue)
             {
-                var cityLower = dto.City.ToLower();
+                query = query.Where(c => c.CoachSports.Any(cs => cs.SportID == search.SportID.Value));
+            }
+
+            if (!string.IsNullOrWhiteSpace(search.City))
+            {
+                var cityLower = search.City.ToLower();
                 query = query.Where(c => c.CoachLocations.Any(cl =>
                     cl.WorkingLocation.ToLower().Contains(cityLower)));
             }
 
-            if (dto.MinRating.HasValue)
-                query = query.Where(c => c.AvgRating >= dto.MinRating.Value);
-
-            if (dto.MinExperience.HasValue)
-                query = query.Where(c => c.ExperienceYears >= dto.MinExperience.Value);
-
-            if (!string.IsNullOrWhiteSpace(dto.Gender) && Enum.TryParse<Gender>(dto.Gender, out var gender))
-                query = query.Where(c => c.Gender == gender);
-
-            query = dto.SortBy?.ToLower() switch
+            if (search.MinRating.HasValue)
             {
-                "rating" => dto.SortOrder?.ToLower() == "asc"
+                query = query.Where(c => c.AvgRating >= search.MinRating.Value);
+            }
+
+            if (search.MinExperience.HasValue)
+            {
+                query = query.Where(c => c.ExperienceYears >= search.MinExperience.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(search.Gender) &&
+                Enum.TryParse<Gender>(search.Gender, out var gender))
+            {
+                query = query.Where(c => c.Gender == gender);
+            }
+
+            query = search.SortBy?.ToLower() switch
+            {
+                "rating" => search.SortOrder?.ToLower() == "asc"
                     ? query.OrderBy(c => c.AvgRating)
                     : query.OrderByDescending(c => c.AvgRating),
-                "experience" => dto.SortOrder?.ToLower() == "asc"
+                "experience" => search.SortOrder?.ToLower() == "asc"
                     ? query.OrderBy(c => c.ExperienceYears)
                     : query.OrderByDescending(c => c.ExperienceYears),
-                "name" => dto.SortOrder?.ToLower() == "desc"
+                "name" => search.SortOrder?.ToLower() == "desc"
                     ? query.OrderByDescending(c => c.F_name)
                     : query.OrderBy(c => c.F_name),
                 _ => query.OrderByDescending(c => c.AvgRating)
@@ -77,8 +85,8 @@ namespace Maranny.Infrastructure.Services
             var totalCount = await query.CountAsync();
 
             var coaches = await query
-                .Skip((dto.Page - 1) * dto.PageSize)
-                .Take(dto.PageSize)
+                .Skip((search.Page - 1) * search.PageSize)
+                .Take(search.PageSize)
                 .Select(c => new
                 {
                     c.CoachID,
@@ -110,47 +118,39 @@ namespace Maranny.Infrastructure.Services
                     }).ToList(),
                     Locations = c.CoachLocations.Select(cl => cl.WorkingLocation).ToList(),
                     TotalReviews = _dbContext.Reviews.Count(r => r.CoachID == c.CoachID)
-                }).ToListAsync();
+                })
+                .ToListAsync();
 
             return new
             {
                 totalCount,
-                page = dto.Page,
-                pageSize = dto.PageSize,
-                totalPages = (int)Math.Ceiling(totalCount / (double)dto.PageSize),
+                page = search.Page,
+                pageSize = search.PageSize,
+                totalPages = (int)Math.Ceiling(totalCount / (double)search.PageSize),
                 coaches
             };
         }
 
-        public async Task<(bool success, object? data)> GetCoachDetailsAsync(int coachId, int? userId)
+        public async Task<object?> GetCoachDetailsAsync(int coachId)
         {
-            if (userId.HasValue)
-            {
-                _dbContext.UserInteractions.Add(new Core.Entities.UserInteraction
-                {
-                    UserId = userId.Value,
-                    CoachId = coachId,
-                    Type = "View",
-                    Timestamp = DateTime.UtcNow,
-                    Context = "Viewed coach profile"
-                });
-                await _dbContext.SaveChangesAsync();
-            }
-
             var coach = await _dbContext.Coaches
                 .Include(c => c.User)
                 .Include(c => c.CoachLocations)
                 .Include(c => c.CoachSports).ThenInclude(cs => cs.Sport)
                 .FirstOrDefaultAsync(c => c.CoachID == coachId);
 
-            if (coach == null) return (false, null);
+            if (coach == null)
+            {
+                return null;
+            }
 
             var upcomingSessions = await _dbContext.TrainingSessions
                 .Include(s => s.Sport)
                 .Where(s => s.CoachID == coachId &&
                             s.Status == SessionStatus.Scheduled &&
-                            s.SessionDate >= DateTime.UtcNow.Date)
-                .OrderBy(s => s.SessionDate).ThenBy(s => s.Start_Time)
+                            s.SessionDate >= _clock.UtcNow.Date)
+                .OrderBy(s => s.SessionDate)
+                .ThenBy(s => s.Start_Time)
                 .Take(10)
                 .Select(s => new
                 {
@@ -164,10 +164,12 @@ namespace Maranny.Infrastructure.Services
                     SportName = s.Sport.Name,
                     Price = _dbContext.CoachSports
                         .Where(cs => cs.CoachID == s.CoachID && cs.SportID == s.SportID)
-                        .Select(cs => cs.PricePerSession).FirstOrDefault(),
+                        .Select(cs => cs.PricePerSession)
+                        .FirstOrDefault(),
                     AvailableSlots = s.MaxParticipants -
                         _dbContext.ClientSessions.Count(cs => cs.SessionID == s.SessionID)
-                }).ToListAsync();
+                })
+                .ToListAsync();
 
             var reviews = await _dbContext.Reviews
                 .Include(r => r.Client)
@@ -182,9 +184,10 @@ namespace Maranny.Infrastructure.Services
                     r.CoachResponse,
                     r.CreatedAt,
                     ClientName = r.Client.F_name + " " + r.Client.L_name
-                }).ToListAsync();
+                })
+                .ToListAsync();
 
-            var result = new
+            return new
             {
                 coach.CoachID,
                 Name = coach.F_name + " " + coach.L_name,
@@ -214,8 +217,6 @@ namespace Maranny.Infrastructure.Services
                 RecentReviews = reviews,
                 TotalReviews = await _dbContext.Reviews.CountAsync(r => r.CoachID == coachId)
             };
-
-            return (true, result);
         }
     }
 }
