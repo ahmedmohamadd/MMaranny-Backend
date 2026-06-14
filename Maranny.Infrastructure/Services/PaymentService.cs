@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Maranny.Application.Abstractions.Common;
 using Maranny.Core.Entities;
 using Maranny.Core.Enums;
+using Maranny.Core.Policies;
 using Maranny.Application.Interfaces;
 using Maranny.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -18,15 +20,18 @@ namespace Maranny.Infrastructure.Services
         private readonly ApplicationDbContext _dbContext;
         private readonly IConfiguration _configuration;
         private readonly HttpClient _httpClient;
+        private readonly IClock _clock;
 
         public PaymentService(
             ApplicationDbContext dbContext,
             IConfiguration configuration,
-            HttpClient httpClient)
+            HttpClient httpClient,
+            IClock clock)
         {
             _dbContext = dbContext;
             _configuration = configuration;
             _httpClient = httpClient;
+            _clock = clock;
         }
 
         public async Task<Payment> InitiatePaymentAsync(int bookingId, decimal amount, string method, int clientId)
@@ -50,8 +55,8 @@ namespace Maranny.Infrastructure.Services
                 Amount = amount,
                 Method = method,
                 Status = PaymentStatus.Pending,
-                TransactionDate = DateTime.UtcNow,
-                PlatformFee = amount * 0.10m, // 10% platform fee
+                TransactionDate = _clock.UtcNow,
+                PlatformFee = RefundPolicy.CalculatePlatformFee(amount),
                 PaymentGateway = "Paymob"
             };
 
@@ -61,7 +66,7 @@ namespace Maranny.Infrastructure.Services
             return payment;
         }
 
-        public async Task<string> GeneratePaymentUrlAsync(Payment payment)
+        public Task<string> GeneratePaymentUrlAsync(Payment payment)
         {
             // TODO: Integrate with Paymob API
             // For now, return a placeholder URL
@@ -73,7 +78,7 @@ namespace Maranny.Infrastructure.Services
             if (string.IsNullOrEmpty(paymobApiKey))
             {
                 // Return mock URL for testing
-                return $"https://payment-gateway.example.com/pay/{payment.PaymentID}";
+                return Task.FromResult($"https://payment-gateway.example.com/pay/{payment.PaymentID}");
             }
 
             // Real Paymob integration would go here:
@@ -82,7 +87,7 @@ namespace Maranny.Infrastructure.Services
             // 3. Generate payment key
             // 4. Return iframe URL
 
-            return $"https://accept.paymob.com/api/acceptance/iframes/[IFRAME_ID]?payment_token=[TOKEN]";
+            return Task.FromResult("https://accept.paymob.com/api/acceptance/iframes/[IFRAME_ID]?payment_token=[TOKEN]");
         }
 
         public async Task<bool> VerifyPaymentAsync(string transactionId)
@@ -149,7 +154,7 @@ namespace Maranny.Infrastructure.Services
             // For now, we just update the database
 
             payment.RefundAmount = refundAmount;
-            payment.RefundedAt = DateTime.UtcNow;
+            payment.RefundedAt = _clock.UtcNow;
             payment.RefundReason = reason;
             payment.IsRefunded = true;
             payment.Status = PaymentStatus.Refunded;

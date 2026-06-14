@@ -21,6 +21,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Maranny.Application\Maranny.Application.csproj" />
     <ProjectReference Include="..\Maranny.Core\Maranny.Core.csproj" />
   </ItemGroup>

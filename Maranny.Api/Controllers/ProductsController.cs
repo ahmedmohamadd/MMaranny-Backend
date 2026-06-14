@@ -1,5 +1,9 @@
 ﻿using Maranny.Application.DTOs.Products;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Features.Products.CreateProduct;
+using Maranny.Application.Features.Products.DeleteProduct;
+using Maranny.Application.Features.Products.GetProductDetails;
+using Maranny.Application.Features.Products.GetProducts;
+using Maranny.Application.Features.Products.UpdateProduct;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -10,11 +14,24 @@ namespace Maranny.API.Controllers
     [Route("api/products")]
     public class ProductsController : ControllerBase
     {
-        private readonly IProductService _productService;
+        private readonly ICreateProductUseCase _createProductUseCase;
+        private readonly IGetProductsUseCase _getProductsUseCase;
+        private readonly IGetProductDetailsUseCase _getProductDetailsUseCase;
+        private readonly IUpdateProductUseCase _updateProductUseCase;
+        private readonly IDeleteProductUseCase _deleteProductUseCase;
 
-        public ProductsController(IProductService productService)
+        public ProductsController(
+            ICreateProductUseCase createProductUseCase,
+            IGetProductsUseCase getProductsUseCase,
+            IGetProductDetailsUseCase getProductDetailsUseCase,
+            IUpdateProductUseCase updateProductUseCase,
+            IDeleteProductUseCase deleteProductUseCase)
         {
-            _productService = productService;
+            _createProductUseCase = createProductUseCase;
+            _getProductsUseCase = getProductsUseCase;
+            _getProductDetailsUseCase = getProductDetailsUseCase;
+            _updateProductUseCase = updateProductUseCase;
+            _deleteProductUseCase = deleteProductUseCase;
         }
 
         [HttpPost]
@@ -24,9 +41,9 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message, data) = await _productService.CreateAsync(userId, dto);
-            if (!success) return BadRequest(new { error = message });
-            return Ok(new { message, data });
+            var result = await _createProductUseCase.ExecuteAsync(new CreateProductCommand(userId, dto));
+            if (result.IsFailure) return BadRequest(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpGet]
@@ -37,18 +54,19 @@ namespace Maranny.API.Controllers
             [FromQuery] string? search, [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
-            var result = await _productService.GetAllAsync(
-                categoryId, sportId, maxPrice, condition, search, page, pageSize);
-            return Ok(result);
+            var result = await _getProductsUseCase.ExecuteAsync(
+                new GetProductsQuery(categoryId, sportId, maxPrice, condition, search, page, pageSize));
+
+            return Ok(result.Value);
         }
 
         [HttpGet("{productId}")]
         [AllowAnonymous]
         public async Task<IActionResult> GetProductDetails(int productId)
         {
-            var (success, data) = await _productService.GetByIdAsync(productId);
-            if (!success) return NotFound(new { error = "Product not found" });
-            return Ok(data);
+            var result = await _getProductDetailsUseCase.ExecuteAsync(new GetProductDetailsQuery(productId));
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpPut("{productId}")]
@@ -58,10 +76,10 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message) = await _productService.UpdateAsync(userId, productId, dto);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return NotFound(new { error = message });
-            return Ok(new { message });
+            var result = await _updateProductUseCase.ExecuteAsync(new UpdateProductCommand(userId, productId, dto));
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(new { message = result.Value });
         }
 
         [HttpDelete("{productId}")]
@@ -72,10 +90,10 @@ namespace Maranny.API.Controllers
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
             var isAdmin = User.IsInRole("Admin");
-            var (success, message) = await _productService.DeleteAsync(userId, productId, isAdmin);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return NotFound(new { error = message });
-            return Ok(new { message });
+            var result = await _deleteProductUseCase.ExecuteAsync(new DeleteProductCommand(userId, productId, isAdmin));
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(new { message = result.Value });
         }
     }
 }

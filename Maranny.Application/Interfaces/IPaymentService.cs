@@ -5,8 +5,6 @@ using System.Text;
 using System.Threading.Tasks;
 using Maranny.Core.Entities;
 
-using Maranny.Core.Entities;
-
 namespace Maranny.Application.Interfaces
 {
     public interface IPaymentService

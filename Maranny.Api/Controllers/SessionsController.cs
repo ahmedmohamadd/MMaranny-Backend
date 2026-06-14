@@ -1,5 +1,9 @@
 ﻿using Maranny.Application.DTOs.Sessions;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Features.Sessions.CancelSession;
+using Maranny.Application.Features.Sessions.CreateSession;
+using Maranny.Application.Features.Sessions.GetAvailableSessions;
+using Maranny.Application.Features.Sessions.GetMySessions;
+using Maranny.Application.Features.Sessions.UpdateSession;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -10,11 +14,24 @@ namespace Maranny.API.Controllers
     [Route("api/sessions")]
     public class SessionsController : ControllerBase
     {
-        private readonly ISessionService _sessionService;
+        private readonly ICreateSessionUseCase _createSessionUseCase;
+        private readonly IGetMySessionsUseCase _getMySessionsUseCase;
+        private readonly IGetAvailableSessionsUseCase _getAvailableSessionsUseCase;
+        private readonly IUpdateSessionUseCase _updateSessionUseCase;
+        private readonly ICancelSessionUseCase _cancelSessionUseCase;
 
-        public SessionsController(ISessionService sessionService)
+        public SessionsController(
+            ICreateSessionUseCase createSessionUseCase,
+            IGetMySessionsUseCase getMySessionsUseCase,
+            IGetAvailableSessionsUseCase getAvailableSessionsUseCase,
+            IUpdateSessionUseCase updateSessionUseCase,
+            ICancelSessionUseCase cancelSessionUseCase)
         {
-            _sessionService = sessionService;
+            _createSessionUseCase = createSessionUseCase;
+            _getMySessionsUseCase = getMySessionsUseCase;
+            _getAvailableSessionsUseCase = getAvailableSessionsUseCase;
+            _updateSessionUseCase = updateSessionUseCase;
+            _cancelSessionUseCase = cancelSessionUseCase;
         }
 
         [HttpPost]
@@ -24,9 +41,9 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message, data) = await _sessionService.CreateSessionAsync(userId, dto);
-            if (!success) return BadRequest(new { error = message });
-            return Ok(new { message, data });
+            var result = await _createSessionUseCase.ExecuteAsync(new CreateSessionCommand(userId, dto));
+            if (result.IsFailure) return BadRequest(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpGet("my")]
@@ -37,9 +54,9 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, data) = await _sessionService.GetMySessionsAsync(userId, status, page, pageSize);
-            if (!success) return NotFound(new { error = "Coach profile not found" });
-            return Ok(data);
+            var result = await _getMySessionsUseCase.ExecuteAsync(new GetMySessionsQuery(userId, status, page, pageSize));
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpGet]
@@ -48,8 +65,10 @@ namespace Maranny.API.Controllers
             [FromQuery] int? coachId, [FromQuery] int? sportId,
             [FromQuery] DateTime? date, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
-            var result = await _sessionService.GetAvailableSessionsAsync(coachId, sportId, date, page, pageSize);
-            return Ok(result);
+            var result = await _getAvailableSessionsUseCase.ExecuteAsync(
+                new GetAvailableSessionsQuery(coachId, sportId, date, page, pageSize));
+
+            return Ok(result.Value);
         }
 
         [HttpPut("{sessionId}")]
@@ -59,10 +78,10 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message) = await _sessionService.UpdateSessionAsync(userId, sessionId, dto);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return NotFound(new { error = message });
-            return Ok(new { message });
+            var result = await _updateSessionUseCase.ExecuteAsync(new UpdateSessionCommand(userId, sessionId, dto));
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(new { message = result.Value });
         }
 
         [HttpDelete("{sessionId}")]
@@ -72,10 +91,10 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message) = await _sessionService.CancelSessionAsync(userId, sessionId);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return NotFound(new { error = message });
-            return Ok(new { message });
+            var result = await _cancelSessionUseCase.ExecuteAsync(new CancelSessionCommand(userId, sessionId));
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(new { message = result.Value });
         }
     }
 }

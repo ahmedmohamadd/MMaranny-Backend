@@ -1,5 +1,7 @@
 ﻿using Maranny.Application.DTOs.Reviews;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Features.Reviews.GetCoachReviews;
+using Maranny.Application.Features.Reviews.RespondToReview;
+using Maranny.Application.Features.Reviews.SubmitReview;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -10,11 +12,18 @@ namespace Maranny.API.Controllers
     [Route("api/reviews")]
     public class ReviewsController : ControllerBase
     {
-        private readonly IReviewService _reviewService;
+        private readonly ISubmitReviewUseCase _submitReviewUseCase;
+        private readonly IGetCoachReviewsUseCase _getCoachReviewsUseCase;
+        private readonly IRespondToReviewUseCase _respondToReviewUseCase;
 
-        public ReviewsController(IReviewService reviewService)
+        public ReviewsController(
+            ISubmitReviewUseCase submitReviewUseCase,
+            IGetCoachReviewsUseCase getCoachReviewsUseCase,
+            IRespondToReviewUseCase respondToReviewUseCase)
         {
-            _reviewService = reviewService;
+            _submitReviewUseCase = submitReviewUseCase;
+            _getCoachReviewsUseCase = getCoachReviewsUseCase;
+            _respondToReviewUseCase = respondToReviewUseCase;
         }
 
         [HttpPost]
@@ -24,9 +33,9 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message, data) = await _reviewService.SubmitReviewAsync(userId, dto);
-            if (!success) return BadRequest(new { error = message });
-            return Ok(new { message, data });
+            var result = await _submitReviewUseCase.ExecuteAsync(new SubmitReviewCommand(userId, dto));
+            if (result.IsFailure) return BadRequest(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpGet("coach/{coachId}")]
@@ -34,9 +43,9 @@ namespace Maranny.API.Controllers
         public async Task<IActionResult> GetCoachReviews(int coachId,
             [FromQuery] int page = 1, [FromQuery] int pageSize = 10)
         {
-            var (success, data) = await _reviewService.GetCoachReviewsAsync(coachId, page, pageSize);
-            if (!success) return NotFound(new { error = "Coach not found" });
-            return Ok(data);
+            var result = await _getCoachReviewsUseCase.ExecuteAsync(new GetCoachReviewsQuery(coachId, page, pageSize));
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpPut("{reviewId}/response")]
@@ -46,10 +55,10 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message) = await _reviewService.RespondToReviewAsync(userId, reviewId, dto);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return NotFound(new { error = message });
-            return Ok(new { message });
+            var result = await _respondToReviewUseCase.ExecuteAsync(new RespondToReviewCommand(userId, reviewId, dto));
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(new { message = result.Value });
         }
     }
 }

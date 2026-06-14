@@ -1,5 +1,7 @@
 ﻿using Maranny.Application.DTOs.Payments;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Features.Payments.GetMyPayments;
+using Maranny.Application.Features.Payments.GetPaymentDetails;
+using Maranny.Application.Features.Payments.InitiatePayment;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -11,11 +13,18 @@ namespace Maranny.API.Controllers
     [Authorize]
     public class PaymentsController : ControllerBase
     {
-        private readonly IPaymentsManagementService _paymentsService;
+        private readonly IInitiatePaymentUseCase _initiatePaymentUseCase;
+        private readonly IGetPaymentDetailsUseCase _getPaymentDetailsUseCase;
+        private readonly IGetMyPaymentsUseCase _getMyPaymentsUseCase;
 
-        public PaymentsController(IPaymentsManagementService paymentsService)
+        public PaymentsController(
+            IInitiatePaymentUseCase initiatePaymentUseCase,
+            IGetPaymentDetailsUseCase getPaymentDetailsUseCase,
+            IGetMyPaymentsUseCase getMyPaymentsUseCase)
         {
-            _paymentsService = paymentsService;
+            _initiatePaymentUseCase = initiatePaymentUseCase;
+            _getPaymentDetailsUseCase = getPaymentDetailsUseCase;
+            _getMyPaymentsUseCase = getMyPaymentsUseCase;
         }
 
         [HttpPost("initiate")]
@@ -25,10 +34,10 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message, data) = await _paymentsService.InitiatePaymentAsync(userId, dto);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return BadRequest(new { error = message });
-            return Ok(new { message, data });
+            var result = await _initiatePaymentUseCase.ExecuteAsync(new InitiatePaymentCommand(userId, dto));
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return BadRequest(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpGet("{paymentId:int}")]
@@ -38,10 +47,12 @@ namespace Maranny.API.Controllers
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
             var isAdmin = User.IsInRole("Admin");
-            var (success, message, data) = await _paymentsService.GetPaymentDetailsAsync(userId, paymentId, isAdmin);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return NotFound(new { error = message });
-            return Ok(data);
+            var result = await _getPaymentDetailsUseCase.ExecuteAsync(
+                new GetPaymentDetailsQuery(userId, paymentId, isAdmin));
+
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpPost("webhook")]
@@ -58,9 +69,9 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, data) = await _paymentsService.GetMyPaymentsAsync(userId);
-            if (!success) return NotFound(new { error = "Client profile not found" });
-            return Ok(data);
+            var result = await _getMyPaymentsUseCase.ExecuteAsync(new GetMyPaymentsQuery(userId));
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
     }
 }

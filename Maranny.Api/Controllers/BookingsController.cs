@@ -1,6 +1,13 @@
 ﻿using Maranny.Application.DTOs.Bookings;
 using Maranny.Application.DTOs.Sessions;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Features.Bookings.ApproveBooking;
+using Maranny.Application.Features.Bookings.BookSession;
+using Maranny.Application.Features.Bookings.CancelBooking;
+using Maranny.Application.Features.Bookings.CoachCancelSession;
+using Maranny.Application.Features.Bookings.DeclineBooking;
+using Maranny.Application.Features.Bookings.GetBookingDetails;
+using Maranny.Application.Features.Bookings.GetCoachBookings;
+using Maranny.Application.Features.Bookings.GetMyBookings;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -12,11 +19,33 @@ namespace Maranny.API.Controllers
     [Authorize]
     public class BookingsController : ControllerBase
     {
-        private readonly IBookingService _bookingService;
+        private readonly IBookSessionUseCase _bookSessionUseCase;
+        private readonly IApproveBookingUseCase _approveBookingUseCase;
+        private readonly IDeclineBookingUseCase _declineBookingUseCase;
+        private readonly ICancelBookingUseCase _cancelBookingUseCase;
+        private readonly ICoachCancelSessionUseCase _coachCancelSessionUseCase;
+        private readonly IGetMyBookingsUseCase _getMyBookingsUseCase;
+        private readonly IGetBookingDetailsUseCase _getBookingDetailsUseCase;
+        private readonly IGetCoachBookingsUseCase _getCoachBookingsUseCase;
 
-        public BookingsController(IBookingService bookingService)
+        public BookingsController(
+            IBookSessionUseCase bookSessionUseCase,
+            IApproveBookingUseCase approveBookingUseCase,
+            IDeclineBookingUseCase declineBookingUseCase,
+            ICancelBookingUseCase cancelBookingUseCase,
+            ICoachCancelSessionUseCase coachCancelSessionUseCase,
+            IGetMyBookingsUseCase getMyBookingsUseCase,
+            IGetBookingDetailsUseCase getBookingDetailsUseCase,
+            IGetCoachBookingsUseCase getCoachBookingsUseCase)
         {
-            _bookingService = bookingService;
+            _bookSessionUseCase = bookSessionUseCase;
+            _approveBookingUseCase = approveBookingUseCase;
+            _declineBookingUseCase = declineBookingUseCase;
+            _cancelBookingUseCase = cancelBookingUseCase;
+            _coachCancelSessionUseCase = coachCancelSessionUseCase;
+            _getMyBookingsUseCase = getMyBookingsUseCase;
+            _getBookingDetailsUseCase = getBookingDetailsUseCase;
+            _getCoachBookingsUseCase = getCoachBookingsUseCase;
         }
 
         [HttpPost]
@@ -26,9 +55,9 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message, data) = await _bookingService.BookSessionAsync(userId, dto);
-            if (!success) return BadRequest(new { error = message });
-            return Ok(data);
+            var result = await _bookSessionUseCase.ExecuteAsync(new BookSessionCommand(userId, dto));
+            if (result.IsFailure) return BadRequest(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpGet("my")]
@@ -40,9 +69,11 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, data) = await _bookingService.GetMyBookingsAsync(userId, status, tab, page, pageSize);
-            if (!success) return NotFound(new { error = "Client profile not found" });
-            return Ok(data);
+            var result = await _getMyBookingsUseCase.ExecuteAsync(
+                new GetMyBookingsQuery(userId, status, tab, page, pageSize));
+
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpGet("{bookingId:int}")]
@@ -52,10 +83,12 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message, data) = await _bookingService.GetBookingDetailsAsync(userId, bookingId);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return NotFound(new { error = message });
-            return Ok(data);
+            var result = await _getBookingDetailsUseCase.ExecuteAsync(
+                new GetBookingDetailsQuery(userId, bookingId));
+
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpGet("coach/my")]
@@ -67,9 +100,11 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, data) = await _bookingService.GetCoachBookingsAsync(userId, status, tab, page, pageSize);
-            if (!success) return NotFound(new { error = "Coach profile not found" });
-            return Ok(data);
+            var result = await _getCoachBookingsUseCase.ExecuteAsync(
+                new GetCoachBookingsQuery(userId, status, tab, page, pageSize));
+
+            if (result.IsFailure) return NotFound(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpPut("{bookingId}/approve")]
@@ -79,10 +114,10 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message) = await _bookingService.ApproveBookingAsync(userId, bookingId);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return BadRequest(new { error = message });
-            return Ok(new { message });
+            var result = await _approveBookingUseCase.ExecuteAsync(new ApproveBookingCommand(userId, bookingId));
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return BadRequest(new { error = result.Error!.Message });
+            return Ok(new { message = result.Value });
         }
 
         [HttpPut("{bookingId}/decline")]
@@ -92,10 +127,10 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message) = await _bookingService.DeclineBookingAsync(userId, bookingId, dto);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return BadRequest(new { error = message });
-            return Ok(new { message });
+            var result = await _declineBookingUseCase.ExecuteAsync(new DeclineBookingCommand(userId, bookingId, dto));
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return BadRequest(new { error = result.Error!.Message });
+            return Ok(new { message = result.Value });
         }
 
         [HttpPut("{bookingId}/cancel")]
@@ -105,10 +140,10 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message, data) = await _bookingService.CancelBookingAsync(userId, bookingId, reason);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return BadRequest(new { error = message });
-            return Ok(new { message, data });
+            var result = await _cancelBookingUseCase.ExecuteAsync(new CancelBookingCommand(userId, bookingId, reason));
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return BadRequest(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
 
         [HttpPut("session/{sessionId}/cancel-by-coach")]
@@ -118,10 +153,10 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message, data) = await _bookingService.CoachCancelSessionAsync(userId, sessionId, reason);
-            if (message == "Forbidden") return Forbid();
-            if (!success) return BadRequest(new { error = message });
-            return Ok(new { message, data });
+            var result = await _coachCancelSessionUseCase.ExecuteAsync(new CoachCancelSessionCommand(userId, sessionId, reason));
+            if (result.Error?.Message == "Forbidden") return Forbid();
+            if (result.IsFailure) return BadRequest(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
     }
 }

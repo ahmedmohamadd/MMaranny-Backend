@@ -1,5 +1,6 @@
 ﻿using Maranny.Application.DTOs.Sports;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Features.Sports.CreateSport;
+using Maranny.Application.Features.Sports.GetSports;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -9,27 +10,31 @@ namespace Maranny.Api.Controllers
     [Route("api/sports")]
     public class SportsController : ControllerBase
     {
-        private readonly ISportsService _sportsService;
+        private readonly IGetSportsUseCase _getSportsUseCase;
+        private readonly ICreateSportUseCase _createSportUseCase;
 
-        public SportsController(ISportsService sportsService)
+        public SportsController(
+            IGetSportsUseCase getSportsUseCase,
+            ICreateSportUseCase createSportUseCase)
         {
-            _sportsService = sportsService;
+            _getSportsUseCase = getSportsUseCase;
+            _createSportUseCase = createSportUseCase;
         }
 
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
-            var sports = await _sportsService.GetAllAsync();
-            return Ok(sports);
+            var result = await _getSportsUseCase.ExecuteAsync();
+            return Ok(result.Value);
         }
 
         [HttpPost]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> Create([FromBody] CreateSportDto dto)
         {
-            var (success, message, data) = await _sportsService.CreateAsync(dto);
-            if (!success) return BadRequest(new { error = message });
-            return Ok(data);
+            var result = await _createSportUseCase.ExecuteAsync(new CreateSportCommand(dto));
+            if (result.IsFailure) return BadRequest(new { error = result.Error!.Message });
+            return Ok(result.Value);
         }
     }
 }

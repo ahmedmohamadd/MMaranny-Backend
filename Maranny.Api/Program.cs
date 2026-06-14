@@ -1,11 +1,10 @@
-using Maranny.Application.Interfaces;
+using Maranny.Application;
 using Maranny.Core.Entities;
 using Maranny.Core.Enums;
+using Maranny.Infrastructure;
 using Maranny.Infrastructure.Data;
-using Maranny.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
@@ -18,70 +17,9 @@ namespace Maranny.Api
         {
             var builder = WebApplication.CreateBuilder(args);
 
-            // ===== DATABASE =====
-            builder.Services.AddDbContext<ApplicationDbContext>(options =>
-                options.UseSqlServer(
-                    builder.Configuration.GetConnectionString("DefaultConnection")
-                )
-            );
-
-            builder.Services.AddScoped<IAdminService, AdminService>();
-
-            builder.Services.AddScoped<IUserService, UsersService>();
-
-            builder.Services.AddScoped<IPaymentsManagementService, PaymentsManagementService>();
-
-            builder.Services.AddScoped<IBookingService, BookingsService>();
-
-            builder.Services.AddScoped<ISessionService, SessionsService>();
-
-            builder.Services.AddScoped<ISearchService, SearchService>();
-
-            builder.Services.AddScoped<IReviewService, ReviewsService>();
-
-            builder.Services.AddScoped<IProductService, ProductsService>();
-
-            builder.Services.AddScoped<ISportsService, SportsService>();
-
-            builder.Services.AddScoped<IAuthService, AuthService>();
-
-            // Register JWT Service
-            builder.Services.AddScoped<Maranny.Application.Interfaces.IJwtService, Maranny.Infrastructure.Services.JwtService>();
-
-            // Register Email Validation Service
-            builder.Services.AddScoped<Maranny.Application.Interfaces.IEmailValidationService, Maranny.Infrastructure.Services.EmailValidationService>();
-
-            // Register Email Service (not configured yet - will add later)
-            builder.Services.AddScoped<Maranny.Application.Interfaces.IEmailService, Maranny.Infrastructure.Services.EmailService>();
-
-            // Register Notification Service
-            builder.Services.AddScoped<Maranny.Application.Interfaces.INotificationService, Maranny.Infrastructure.Services.NotificationService>();
-
-            // Register HttpClient for PaymentService
-            builder.Services.AddHttpClient<Maranny.Application.Interfaces.IPaymentService, Maranny.Infrastructure.Services.PaymentService>();
-
-            // Register Chat Service
-            builder.Services.AddScoped<Maranny.Application.Interfaces.IChatService, Maranny.Infrastructure.Services.ChatService>();
-
-            // ===== IDENTITY =====
-            builder.Services.AddIdentity<ApplicationUser, IdentityRole<int>>(options =>
-            {
-                // Password settings
-                options.Password.RequireDigit = true;
-                options.Password.RequireLowercase = true;
-                options.Password.RequireUppercase = true;
-                options.Password.RequireNonAlphanumeric = false;
-                options.Password.RequiredLength = 8;
-
-                // User settings
-                options.User.RequireUniqueEmail = true;
-
-                // Lockout settings
-                options.Lockout.MaxFailedAccessAttempts = 5;
-                options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
-            })
-            .AddEntityFrameworkStores<ApplicationDbContext>()
-            .AddDefaultTokenProviders();
+            builder.Services
+                .AddApplication()
+                .AddInfrastructure(builder.Configuration);
 
             // ===== JWT AUTHENTICATION =====
             var jwtSettings = builder.Configuration.GetSection("JwtSettings");
@@ -177,9 +115,6 @@ namespace Maranny.Api
                           .AllowCredentials();
                 });
             });
-            // Add SignalR
-            builder.Services.AddSignalR();
-
             var app = builder.Build();
 
             // Seed roles and default admin
