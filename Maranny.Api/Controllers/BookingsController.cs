@@ -21,17 +21,20 @@ namespace Maranny.API.Controllers
         private readonly ApplicationDbContext _dbContext;
         private readonly INotificationService _notificationService;
         private readonly IPaymentService _paymentService;
+        private readonly IChatService _chatService;
         private readonly ILogger<BookingsController> _logger;
 
         public BookingsController(
             ApplicationDbContext dbContext,
             INotificationService notificationService,
             IPaymentService paymentService,
+            IChatService chatService,
             ILogger<BookingsController> logger)
         {
             _dbContext = dbContext;
             _notificationService = notificationService;
             _paymentService = paymentService;
+            _chatService = chatService;
             _logger = logger;
         }
 
@@ -524,11 +527,26 @@ namespace Maranny.API.Controllers
 
             if (clientUserId != 0)
             {
+                var session = booking.TrainingSession;
+                var startTime = DateTime.Today.Add(session.Start_Time).ToString("h:mm tt", CultureInfo.InvariantCulture);
+                var day = session.SessionDate.ToString("dddd", CultureInfo.InvariantCulture);
+                var location = string.IsNullOrWhiteSpace(session.Location) ? "the selected location" : session.Location.Trim();
+                var autoMessage = $"Hey! Confirmed for {day} {startTime} at {location}";
+
                 await TrySendNotificationAsync(
                     clientUserId,
                     "Booking Confirmed",
-                    $"Your booking for {booking.TrainingSession.SessionDate:MMM dd} has been approved by the coach.",
+                    autoMessage,
                     NotificationType.BookingConfirmation);
+
+                try
+                {
+                    await _chatService.SendMessageAsync(userId, clientUserId, autoMessage);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Booking approval chat message failed for BookingID={BookingId}", bookingId);
+                }
             }
 
             return Ok(new { message = "Booking approved successfully" });
@@ -1203,3 +1221,4 @@ namespace Maranny.API.Controllers
         }
     }
 }
+
