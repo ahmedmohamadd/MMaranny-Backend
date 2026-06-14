@@ -1,5 +1,10 @@
 using Maranny.Application.Abstractions.Common;
+using Maranny.Application.Abstractions.Administration;
+using Maranny.Application.Abstractions.Identity;
+using Maranny.Application.Abstractions.Messaging;
+using Maranny.Application.Abstractions.Notifications;
 using Maranny.Application.Abstractions.Persistence;
+using Maranny.Application.Abstractions.Profiles;
 using Maranny.Application.Interfaces;
 using Maranny.Core.Entities;
 using Maranny.Infrastructure.Common;
@@ -24,15 +29,15 @@ namespace Maranny.Infrastructure
             services.AddDbContext<ApplicationDbContext>(options =>
                 options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
-            services.AddScoped<IAdminService, AdminService>();
-            services.AddScoped<IUserService, UsersService>();
-            services.AddScoped<IAuthService, AuthService>();
+            services.AddScoped<IAdminGateway, AdminService>();
+            services.AddScoped<IUserProfileGateway, UsersService>();
+            services.AddScoped<IAuthGateway, AuthService>();
             services.AddScoped<IJwtService, JwtService>();
             services.AddScoped<IEmailValidationService, EmailValidationService>();
             services.AddScoped<IEmailService, EmailService>();
-            services.AddScoped<INotificationService, NotificationService>();
+            services.AddScoped<INotificationGateway, NotificationService>();
             services.AddHttpClient<IPaymentService, PaymentService>();
-            services.AddScoped<IChatService, ChatService>();
+            services.AddScoped<IChatGateway, ChatService>();
             services.AddSingleton<IClock, SystemClock>();
             services.AddScoped<IUnitOfWork, UnitOfWork>();
             services.AddScoped<IClientRepository, ClientRepository>();

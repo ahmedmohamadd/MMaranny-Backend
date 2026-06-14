@@ -1,4 +1,5 @@
-﻿using Google.Apis.Auth;
+using Google.Apis.Auth;
+using Maranny.Application.Abstractions.Identity;
 using Maranny.Application.DTOs.Auth;
 using Maranny.Application.Interfaces;
 using Maranny.Core.Entities;
@@ -10,7 +11,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace Maranny.Infrastructure.Services
 {
-    public class AuthService : IAuthService
+    public class AuthService : IAuthGateway
     {
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly ApplicationDbContext _dbContext;

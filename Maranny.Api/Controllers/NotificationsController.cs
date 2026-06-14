@@ -1,4 +1,4 @@
-﻿using Maranny.Application.Interfaces;
+using Maranny.Application.Features.Notifications;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -10,11 +10,11 @@ namespace Maranny.API.Controllers
     [Authorize]
     public class NotificationsController : ControllerBase
     {
-        private readonly INotificationService _notificationService;
+        private readonly INotificationUseCases _notificationUseCases;
 
-        public NotificationsController(INotificationService notificationService)
+        public NotificationsController(INotificationUseCases notificationUseCases)
         {
-            _notificationService = notificationService;
+            _notificationUseCases = notificationUseCases;
         }
 
         // Get my notifications
@@ -28,7 +28,7 @@ namespace Maranny.API.Controllers
                 return Unauthorized();
             }
 
-            var notifications = await _notificationService.GetUserNotificationsAsync(userId, unreadOnly);
+            var notifications = await _notificationUseCases.GetUserNotificationsAsync(userId, unreadOnly);
             return Ok(notifications);
         }
 
@@ -43,7 +43,7 @@ namespace Maranny.API.Controllers
                 return Unauthorized();
             }
 
-            var count = await _notificationService.GetUnreadCountAsync(userId);
+            var count = await _notificationUseCases.GetUnreadCountAsync(userId);
             return Ok(new { unreadCount = count });
         }
 
@@ -58,7 +58,7 @@ namespace Maranny.API.Controllers
                 return Unauthorized();
             }
 
-            await _notificationService.MarkAsReadAsync(notificationId, userId);
+            await _notificationUseCases.MarkAsReadAsync(notificationId, userId);
             return Ok(new { message = "Notification marked as read" });
         }
     }

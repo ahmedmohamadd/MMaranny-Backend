@@ -1,13 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Maranny.Application.DTOs.Profile;
 
-namespace Maranny.Application.Interfaces
+namespace Maranny.Application.Features.Users
 {
-    public interface IUserService
+    public interface IUserUseCases
     {
         Task<(bool success, string message)> UpdateProfileAsync(int userId, UpdateProfileDto dto);
         Task<(bool success, string message, object? data)> UpdatePreferencesAsync(int userId, UpdatePreferencesDto dto);

@@ -1,10 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Maranny.Core.Entities;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Abstractions.Messaging;
 using Maranny.Infrastructure.Data;
 using Maranny.Infrastructure.Hubs;
 using Microsoft.AspNetCore.SignalR;
@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Maranny.Infrastructure.Services
 {
-    public class ChatService : IChatService
+    public class ChatService : IChatGateway
     {
         private readonly ApplicationDbContext _dbContext;
         private readonly IHubContext<ChatHub> _hubContext;

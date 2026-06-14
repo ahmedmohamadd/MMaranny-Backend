@@ -1,6 +1,6 @@
 using Maranny.Application.Abstractions.Persistence;
 using Maranny.Application.Common.Results;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Abstractions.Notifications;
 using Maranny.Core.Enums;
 
 namespace Maranny.Application.Features.Bookings.ApproveBooking
@@ -10,14 +10,14 @@ namespace Maranny.Application.Features.Bookings.ApproveBooking
         private readonly ICoachRepository _coaches;
         private readonly IBookingRepository _bookings;
         private readonly IClientRepository _clients;
-        private readonly INotificationService _notificationService;
+        private readonly INotificationGateway _notificationService;
         private readonly IUnitOfWork _unitOfWork;
 
         public ApproveBookingUseCase(
             ICoachRepository coaches,
             IBookingRepository bookings,
             IClientRepository clients,
-            INotificationService notificationService,
+            INotificationGateway notificationService,
             IUnitOfWork unitOfWork)
         {
             _coaches = coaches;

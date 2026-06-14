@@ -1,11 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Maranny.Core.Entities;
 using Maranny.Core.Enums;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Abstractions.Notifications;
 using Maranny.Infrastructure.Data;
 using Maranny.Infrastructure.Hubs;
 using Microsoft.AspNetCore.SignalR;
@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Maranny.Infrastructure.Services
 {
-    public class NotificationService : INotificationService
+    public class NotificationService : INotificationGateway
     {
         private readonly ApplicationDbContext _dbContext;
         private readonly IHubContext<NotificationHub> _hubContext;

@@ -1,6 +1,7 @@
 using Maranny.Application.Abstractions.Common;
 using Maranny.Application.Abstractions.Persistence;
 using Maranny.Application.Common.Results;
+using Maranny.Application.Abstractions.Notifications;
 using Maranny.Application.Interfaces;
 using Maranny.Core.Enums;
 using Maranny.Core.Policies;
@@ -14,7 +15,7 @@ namespace Maranny.Application.Features.Bookings.CancelBooking
         private readonly IPaymentRepository _payments;
         private readonly ICoachRepository _coaches;
         private readonly IPaymentService _paymentService;
-        private readonly INotificationService _notificationService;
+        private readonly INotificationGateway _notificationService;
         private readonly IUnitOfWork _unitOfWork;
         private readonly IClock _clock;
 
@@ -24,7 +25,7 @@ namespace Maranny.Application.Features.Bookings.CancelBooking
             IPaymentRepository payments,
             ICoachRepository coaches,
             IPaymentService paymentService,
-            INotificationService notificationService,
+            INotificationGateway notificationService,
             IUnitOfWork unitOfWork,
             IClock clock)
         {

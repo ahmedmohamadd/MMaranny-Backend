@@ -1,5 +1,5 @@
-﻿using Maranny.Application.DTOs.Auth;
-using Maranny.Application.Interfaces;
+using Maranny.Application.DTOs.Auth;
+using Maranny.Application.Features.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -10,18 +10,18 @@ namespace Maranny.API.Controllers
     [Route("api/auth")]
     public class AuthController : ControllerBase
     {
-        private readonly IAuthService _authService;
+        private readonly IAuthUseCases _authUseCases;
 
-        public AuthController(IAuthService authService)
+        public AuthController(IAuthUseCases authUseCases)
         {
-            _authService = authService;
+            _authUseCases = authUseCases;
         }
 
         [HttpPost("register")]
         [AllowAnonymous]
         public async Task<IActionResult> Register(RegisterDto dto)
         {
-            var (success, message, data) = await _authService.RegisterAsync(
+            var (success, message, data) = await _authUseCases.RegisterAsync(
                 dto, Request.Scheme, Request.Host.ToString());
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message, user = data });
@@ -31,7 +31,7 @@ namespace Maranny.API.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> CompleteCoachOnboarding(CompleteCoachOnboardingDto dto)
         {
-            var (success, message, data) = await _authService.CompleteCoachOnboardingAsync(dto);
+            var (success, message, data) = await _authUseCases.CompleteCoachOnboardingAsync(dto);
             if (message == "AccountBlocked") return StatusCode(403, new { error = message });
             if (!success) return BadRequest(new { error = message, data });
             return Ok(new { message, data });
@@ -41,7 +41,7 @@ namespace Maranny.API.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> Login(LoginDto dto)
         {
-            var (success, statusCode, message, data) = await _authService.LoginAsync(dto);
+            var (success, statusCode, message, data) = await _authUseCases.LoginAsync(dto);
             if (!success) return StatusCode(statusCode, new { error = message });
             return Ok(data);
         }
@@ -50,7 +50,7 @@ namespace Maranny.API.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> Refresh(RefreshTokenDto dto)
         {
-            var (success, statusCode, message, data) = await _authService.RefreshTokenAsync(dto);
+            var (success, statusCode, message, data) = await _authUseCases.RefreshTokenAsync(dto);
             if (!success) return StatusCode(statusCode, new { error = message });
             return Ok(data);
         }
@@ -62,7 +62,7 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message) = await _authService.LogoutAsync(userId, dto);
+            var (success, message) = await _authUseCases.LogoutAsync(userId, dto);
             return Ok(new { message });
         }
 
@@ -73,7 +73,7 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message, data) = await _authService.GetCurrentUserAsync(userId);
+            var (success, message, data) = await _authUseCases.GetCurrentUserAsync(userId);
             if (!success) return NotFound(new { error = message });
             return Ok(data);
         }
@@ -82,7 +82,7 @@ namespace Maranny.API.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> ForgotPassword(ForgotPasswordDto dto)
         {
-            var (_, message) = await _authService.ForgotPasswordAsync(dto);
+            var (_, message) = await _authUseCases.ForgotPasswordAsync(dto);
             return Ok(new { message });
         }
 
@@ -90,7 +90,7 @@ namespace Maranny.API.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> ResetPassword(ResetPasswordDto dto)
         {
-            var (success, message) = await _authService.ResetPasswordAsync(dto);
+            var (success, message) = await _authUseCases.ResetPasswordAsync(dto);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message });
         }
@@ -102,7 +102,7 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message) = await _authService.ChangePasswordAsync(userId, dto);
+            var (success, message) = await _authUseCases.ChangePasswordAsync(userId, dto);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message });
         }
@@ -113,7 +113,7 @@ namespace Maranny.API.Controllers
         {
             if (string.IsNullOrEmpty(token)) return BadRequest(new { error = "Invalid confirmation token" });
 
-            var (success, message) = await _authService.ConfirmEmailAsync(userId, token);
+            var (success, message) = await _authUseCases.ConfirmEmailAsync(userId, token);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message });
         }
@@ -122,7 +122,7 @@ namespace Maranny.API.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> ResendConfirmationEmail([FromBody] ResendConfirmationDto dto)
         {
-            var (success, message) = await _authService.ResendConfirmationAsync(
+            var (success, message) = await _authUseCases.ResendConfirmationAsync(
                 dto, Request.Scheme, Request.Host.ToString());
             if (!success) return StatusCode(500, new { error = message });
             return Ok(new { message });
@@ -132,7 +132,7 @@ namespace Maranny.API.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> GoogleLogin(GoogleLoginDto dto)
         {
-            var (success, statusCode, message, data) = await _authService.GoogleLoginAsync(dto);
+            var (success, statusCode, message, data) = await _authUseCases.GoogleLoginAsync(dto);
             if (!success) return StatusCode(statusCode, new { error = message });
             return Ok(data);
         }

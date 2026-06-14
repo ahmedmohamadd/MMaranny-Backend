@@ -1,7 +1,7 @@
 using Maranny.Application.Abstractions.Common;
 using Maranny.Application.Abstractions.Persistence;
 using Maranny.Application.Common.Results;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Abstractions.Notifications;
 using Maranny.Core.Entities;
 using Maranny.Core.Enums;
 using Maranny.Core.Policies;
@@ -14,7 +14,7 @@ namespace Maranny.Application.Features.Bookings.BookSession
         private readonly ITrainingSessionRepository _sessions;
         private readonly IBookingRepository _bookings;
         private readonly ICoachSportRepository _coachSports;
-        private readonly INotificationService _notificationService;
+        private readonly INotificationGateway _notificationService;
         private readonly IUnitOfWork _unitOfWork;
         private readonly IClock _clock;
 
@@ -23,7 +23,7 @@ namespace Maranny.Application.Features.Bookings.BookSession
             ITrainingSessionRepository sessions,
             IBookingRepository bookings,
             ICoachSportRepository coachSports,
-            INotificationService notificationService,
+            INotificationGateway notificationService,
             IUnitOfWork unitOfWork,
             IClock clock)
         {

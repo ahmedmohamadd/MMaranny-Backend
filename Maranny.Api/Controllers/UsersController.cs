@@ -1,5 +1,5 @@
 using Maranny.Application.DTOs.Profile;
-using Maranny.Application.Interfaces;
+using Maranny.Application.Features.Users;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -11,11 +11,11 @@ namespace Maranny.API.Controllers
     [Authorize]
     public class UsersController : ControllerBase
     {
-        private readonly IUserService _userService;
+        private readonly IUserUseCases _userUseCases;
 
-        public UsersController(IUserService userService)
+        public UsersController(IUserUseCases userUseCases)
         {
-            _userService = userService;
+            _userUseCases = userUseCases;
         }
 
         [HttpPut("profile")]
@@ -24,7 +24,7 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message) = await _userService.UpdateProfileAsync(userId, dto);
+            var (success, message) = await _userUseCases.UpdateProfileAsync(userId, dto);
             if (!success) return NotFound(new { error = message });
             return Ok(new { message });
         }
@@ -35,7 +35,7 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message, data) = await _userService.UpdatePreferencesAsync(userId, dto);
+            var (success, message, data) = await _userUseCases.UpdatePreferencesAsync(userId, dto);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message, savedPreferences = data });
         }
@@ -47,7 +47,7 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, data) = await _userService.GetCoachSetupAsync(userId);
+            var (success, data) = await _userUseCases.GetCoachSetupAsync(userId);
             if (!success) return NotFound(new { error = "Coach profile not found" });
             return Ok(data);
         }
@@ -59,7 +59,7 @@ namespace Maranny.API.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
-            var (success, message) = await _userService.UpdateCoachSetupAsync(userId, dto);
+            var (success, message) = await _userUseCases.UpdateCoachSetupAsync(userId, dto);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message });
         }
@@ -72,7 +72,7 @@ namespace Maranny.API.Controllers
             if (!int.TryParse(userIdClaim, out int userId)) return Unauthorized();
 
             using var stream = dto.File.OpenReadStream();
-            var (success, message, data) = await _userService.UploadProfileImageAsync(
+            var (success, message, data) = await _userUseCases.UploadProfileImageAsync(
                 userId, stream, dto.File.FileName, dto.File.Length);
 
             if (!success) return BadRequest(new { error = message });

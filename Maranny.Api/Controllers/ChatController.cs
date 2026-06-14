@@ -1,4 +1,4 @@
-﻿using Maranny.Application.Interfaces;
+using Maranny.Application.Features.Chat;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -10,11 +10,11 @@ namespace Maranny.API.Controllers
     [Authorize]
     public class ChatController : ControllerBase
     {
-        private readonly IChatService _chatService;
+        private readonly IChatUseCases _chatUseCases;
 
-        public ChatController(IChatService chatService)
+        public ChatController(IChatUseCases chatUseCases)
         {
-            _chatService = chatService;
+            _chatUseCases = chatUseCases;
         }
 
         // Send message
@@ -35,7 +35,7 @@ namespace Maranny.API.Controllers
 
             try
             {
-                var message = await _chatService.SendMessageAsync(userId, request.ReceiverId, request.Content);
+                var message = await _chatUseCases.SendMessageAsync(userId, request.ReceiverId, request.Content);
 
                 return Ok(new
                 {
@@ -61,7 +61,7 @@ namespace Maranny.API.Controllers
                 return Unauthorized();
             }
 
-            var messages = await _chatService.GetConversationAsync(userId, otherUserId, page, pageSize);
+            var messages = await _chatUseCases.GetConversationAsync(userId, otherUserId, page, pageSize);
 
             var result = messages.Select(m => new
             {
@@ -89,7 +89,7 @@ namespace Maranny.API.Controllers
                 return Unauthorized();
             }
 
-            var conversations = await _chatService.GetUserConversationsAsync(userId);
+            var conversations = await _chatUseCases.GetUserConversationsAsync(userId);
             return Ok(conversations);
         }
 
@@ -104,7 +104,7 @@ namespace Maranny.API.Controllers
                 return Unauthorized();
             }
 
-            await _chatService.MarkMessagesAsReadAsync(otherUserId, userId);
+            await _chatUseCases.MarkMessagesAsReadAsync(otherUserId, userId);
             return Ok(new { message = "Messages marked as read" });
         }
 
@@ -119,7 +119,7 @@ namespace Maranny.API.Controllers
                 return Unauthorized();
             }
 
-            var count = await _chatService.GetUnreadMessageCountAsync(userId, fromUserId);
+            var count = await _chatUseCases.GetUnreadMessageCountAsync(userId, fromUserId);
             return Ok(new { unreadCount = count });
         }
     }

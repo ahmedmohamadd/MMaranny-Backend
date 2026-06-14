@@ -1,14 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
 using Maranny.Application.DTOs.Admin;
 
-namespace Maranny.Application.Interfaces
+namespace Maranny.Application.Abstractions.Administration
 {
-    public interface IAdminService
+    public interface IAdminGateway
     {
         Task<(bool success, string message)> BlockUserAsync(int adminId, int userId, BlockUserDto dto);
         Task<(bool success, string message)> UnblockUserAsync(int userId);

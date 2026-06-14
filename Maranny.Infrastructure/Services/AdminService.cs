@@ -1,11 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
+using Maranny.Application.Abstractions.Administration;
 using Maranny.Application.DTOs.Admin;
-using Maranny.Application.Interfaces;
 using Maranny.Core.Entities;
 using Maranny.Core.Enums;
 using Maranny.Infrastructure.Data;
@@ -14,7 +14,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Maranny.Infrastructure.Services
 {
-    public class AdminService : IAdminService
+    public class AdminService : IAdminGateway
     {
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly ApplicationDbContext _dbContext;

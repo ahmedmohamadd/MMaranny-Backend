@@ -26,6 +26,11 @@ using Maranny.Application.Features.Payments.GetPaymentDetails;
 using Maranny.Application.Features.Payments.InitiatePayment;
 using Maranny.Application.Features.Search.GetCoachDetails;
 using Maranny.Application.Features.Search.SearchCoaches;
+using Maranny.Application.Features.Admin;
+using Maranny.Application.Features.Auth;
+using Maranny.Application.Features.Chat;
+using Maranny.Application.Features.Notifications;
+using Maranny.Application.Features.Users;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Maranny.Application
@@ -62,6 +67,11 @@ namespace Maranny.Application
             services.AddScoped<IGetMyPaymentsUseCase, GetMyPaymentsUseCase>();
             services.AddScoped<ISearchCoachesUseCase, SearchCoachesUseCase>();
             services.AddScoped<IGetCoachDetailsUseCase, GetCoachDetailsUseCase>();
+            services.AddScoped<IAuthUseCases, AuthUseCases>();
+            services.AddScoped<IAdminUseCases, AdminUseCases>();
+            services.AddScoped<IUserUseCases, UserUseCases>();
+            services.AddScoped<INotificationUseCases, NotificationUseCases>();
+            services.AddScoped<IChatUseCases, ChatUseCases>();
 
             return services;
         }

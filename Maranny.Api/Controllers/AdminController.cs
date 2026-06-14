@@ -1,5 +1,5 @@
-﻿using Maranny.Application.DTOs.Admin;
-using Maranny.Application.Interfaces;
+using Maranny.Application.DTOs.Admin;
+using Maranny.Application.Features.Admin;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -11,11 +11,11 @@ namespace Maranny.API.Controllers
     [Authorize(Roles = "Admin")]
     public class AdminController : ControllerBase
     {
-        private readonly IAdminService _adminService;
+        private readonly IAdminUseCases _adminUseCases;
 
-        public AdminController(IAdminService adminService)
+        public AdminController(IAdminUseCases adminUseCases)
         {
-            _adminService = adminService;
+            _adminUseCases = adminUseCases;
         }
 
         [HttpPost("users/{userId}/block")]
@@ -24,7 +24,7 @@ namespace Maranny.API.Controllers
             var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(adminIdClaim, out int adminId)) return Unauthorized();
 
-            var (success, message) = await _adminService.BlockUserAsync(adminId, userId, dto);
+            var (success, message) = await _adminUseCases.BlockUserAsync(adminId, userId, dto);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message });
         }
@@ -32,7 +32,7 @@ namespace Maranny.API.Controllers
         [HttpPost("users/{userId}/unblock")]
         public async Task<IActionResult> UnblockUser(int userId)
         {
-            var (success, message) = await _adminService.UnblockUserAsync(userId);
+            var (success, message) = await _adminUseCases.UnblockUserAsync(userId);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message });
         }
@@ -40,7 +40,7 @@ namespace Maranny.API.Controllers
         [HttpGet("coaches/pending")]
         public async Task<IActionResult> GetPendingCoaches()
         {
-            var result = await _adminService.GetPendingCoachesAsync();
+            var result = await _adminUseCases.GetPendingCoachesAsync();
             return Ok(result);
         }
 
@@ -50,7 +50,7 @@ namespace Maranny.API.Controllers
             var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(adminIdClaim, out int adminId)) return Unauthorized();
 
-            var (success, message) = await _adminService.VerifyCoachAsync(adminId, coachId, dto);
+            var (success, message) = await _adminUseCases.VerifyCoachAsync(adminId, coachId, dto);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message });
         }
@@ -58,7 +58,7 @@ namespace Maranny.API.Controllers
         [HttpPost("coaches/{coachId}/reject")]
         public async Task<IActionResult> RejectCoach(int coachId, [FromBody] RejectCoachDto dto)
         {
-            var (success, message) = await _adminService.RejectCoachAsync(coachId, dto);
+            var (success, message) = await _adminUseCases.RejectCoachAsync(coachId, dto);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message });
         }
@@ -66,7 +66,7 @@ namespace Maranny.API.Controllers
         [HttpGet("users/{userId}")]
         public async Task<IActionResult> GetUserDetails(int userId)
         {
-            var (success, data) = await _adminService.GetUserDetailsAsync(userId);
+            var (success, data) = await _adminUseCases.GetUserDetailsAsync(userId);
             if (!success) return NotFound(new { error = "User not found" });
             return Ok(data);
         }
@@ -76,14 +76,14 @@ namespace Maranny.API.Controllers
             [FromQuery] string? role, [FromQuery] bool? isBlocked,
             [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
-            var result = await _adminService.GetUsersAsync(role, isBlocked, page, pageSize);
+            var result = await _adminUseCases.GetUsersAsync(role, isBlocked, page, pageSize);
             return Ok(result);
         }
 
         [HttpGet("certificates/pending")]
         public async Task<IActionResult> GetPendingCertificates()
         {
-            var result = await _adminService.GetPendingCertificatesAsync();
+            var result = await _adminUseCases.GetPendingCertificatesAsync();
             return Ok(result);
         }
 
@@ -93,7 +93,7 @@ namespace Maranny.API.Controllers
             var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!int.TryParse(adminIdClaim, out int adminId)) return Unauthorized();
 
-            var (success, message) = await _adminService.VerifyCertificateAsync(adminId, coachId, notes);
+            var (success, message) = await _adminUseCases.VerifyCertificateAsync(adminId, coachId, notes);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message });
         }
@@ -102,14 +102,14 @@ namespace Maranny.API.Controllers
         public async Task<IActionResult> GetPendingReviews(
             [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
-            var result = await _adminService.GetPendingReviewsAsync(page, pageSize);
+            var result = await _adminUseCases.GetPendingReviewsAsync(page, pageSize);
             return Ok(result);
         }
 
         [HttpPut("reviews/{reviewId}/moderate")]
         public async Task<IActionResult> ModerateReview(int reviewId, [FromBody] string action = "delete")
         {
-            var (success, message) = await _adminService.ModerateReviewAsync(reviewId, action);
+            var (success, message) = await _adminUseCases.ModerateReviewAsync(reviewId, action);
             if (!success) return BadRequest(new { error = message });
             return Ok(new { message });
         }
@@ -117,7 +117,7 @@ namespace Maranny.API.Controllers
         [HttpGet("analytics")]
         public async Task<IActionResult> GetAnalytics()
         {
-            var result = await _adminService.GetAnalyticsAsync();
+            var result = await _adminUseCases.GetAnalyticsAsync();
             return Ok(result);
         }
     }

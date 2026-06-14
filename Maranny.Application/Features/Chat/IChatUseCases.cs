@@ -1,13 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Maranny.Core.Entities;
 
-namespace Maranny.Application.Interfaces
+namespace Maranny.Application.Features.Chat
 {
-    public interface IChatService
+    public interface IChatUseCases
     {
         Task<ChatMessage> SendMessageAsync(int senderId, int receiverId, string content);
         Task<List<ChatMessage>> GetConversationAsync(int userId1, int userId2, int page = 1, int pageSize = 50);

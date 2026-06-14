@@ -1,15 +1,8 @@
-﻿using Maranny.Application.DTOs.Auth;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using static System.Net.Mime.MediaTypeNames;
+using Maranny.Application.DTOs.Auth;
 
-
-namespace Maranny.Application.Interfaces
+namespace Maranny.Application.Features.Auth
 {
-    public interface IAuthService
+    public interface IAuthUseCases
     {
         Task<(bool success, string message, object? data)> RegisterAsync(RegisterDto dto, string scheme, string host);
         Task<(bool success, int statusCode, string message, object? data)> LoginAsync(LoginDto dto);

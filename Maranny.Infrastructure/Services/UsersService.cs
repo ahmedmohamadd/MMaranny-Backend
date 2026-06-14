@@ -1,11 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
+using Maranny.Application.Abstractions.Profiles;
 using Maranny.Application.DTOs.Profile;
-using Maranny.Application.Interfaces;
 using Maranny.Core.Entities;
 using Maranny.Core.Enums;
 using Maranny.Infrastructure.Data;
@@ -16,7 +16,7 @@ using System.Text.Json;
 
 namespace Maranny.Infrastructure.Services
 {
-    public class UsersService : IUserService
+    public class UsersService : IUserProfileGateway
     {
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly ApplicationDbContext _dbContext;
